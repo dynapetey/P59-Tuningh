@@ -94,7 +94,53 @@ object P59BinaryParser {
             false
         }
 
-        // 8. Generate raw hex truncated block
+        // 8. Injector Flow Rate: offset 0x020164 (10x byte representation)
+        val ifrOffset = 0x020164
+        val injectorFlowRateLbHr = if (size > ifrOffset) {
+            val rawValue = data[ifrOffset].toInt() and 0xFF
+            if (rawValue in 100..900) rawValue / 10.0 else 24.8
+        } else {
+            24.8
+        }
+
+        // 9. Rev Limit RPM: offset 0x020166 (Big-endian 16-bit word)
+        val revLimitOffset = 0x020166
+        val revLimitRpm = if (size > revLimitOffset + 1) {
+            val high = data[revLimitOffset].toInt() and 0xFF
+            val low = data[revLimitOffset + 1].toInt() and 0xFF
+            val limit = (high shl 8) or low
+            if (limit in 3000..9000) limit else 5900
+        } else {
+            5900
+        }
+
+        // 10. Fan 1 & 2 On Temperature: offsets 0x020168, 0x020169
+        val fan1Offset = 0x020168
+        val fan1OnTempF = if (size > fan1Offset) {
+            val temp = data[fan1Offset].toInt() and 0xFF
+            if (temp in 100..250) temp else 205
+        } else {
+            205
+        }
+
+        val fan2Offset = 0x020169
+        val fan2OnTempF = if (size > fan2Offset) {
+            val temp = data[fan2Offset].toInt() and 0xFF
+            if (temp in 100..250) temp else 215
+        } else {
+            215
+        }
+
+        // 11. Volumetric Efficiency Multiplier: offset 0x02016A
+        val veMultOffset = 0x02016A
+        val veMultiplierPercent = if (size > veMultOffset) {
+            val rawMult = data[veMultOffset].toInt() and 0xFF
+            if (rawMult in 50..200) rawMult else 100
+        } else {
+            100
+        }
+
+        // 12. Generate raw hex truncated block
         val importantSize = size.coerceAtMost(16)
         val rawHex = if (importantSize > 0) {
             data.take(importantSize).joinToString("") { String.format("%02X", it) }
@@ -111,6 +157,11 @@ object P59BinaryParser {
             leanCruiseEnabled = leanCruiseEnabled,
             sparkMaxAdvance = sparkMaxAdvance,
             targetIdleRpm = targetIdleRpm,
+            injectorFlowRateLbHr = injectorFlowRateLbHr,
+            revLimitRpm = revLimitRpm,
+            fan1OnTempF = fan1OnTempF,
+            fan2OnTempF = fan2OnTempF,
+            veMultiplierPercent = veMultiplierPercent,
             isChecksumValid = true,
             rawHexTrunc = rawHex,
             lastModified = System.currentTimeMillis()
@@ -128,7 +179,12 @@ object P59BinaryParser {
         mapSensorBarType: Int = 1,
         targetIdleRpm: Int = 650,
         sparkMaxAdvance: Int = 36,
-        leanCruiseEnabled: Boolean = false
+        leanCruiseEnabled: Boolean = false,
+        injectorFlowRateLbHr: Double = 24.8,
+        revLimitRpm: Int = 5900,
+        fan1OnTempF: Int = 205,
+        fan2OnTempF: Int = 215,
+        veMultiplierPercent: Int = 100
     ): ByteArray {
         val bin = ByteArray(1048576) // 1MB
 
@@ -158,6 +214,21 @@ object P59BinaryParser {
 
         // Write Lean Cruise enabled byte at 0x20163
         bin[0x20163] = if (leanCruiseEnabled) 0x01.toByte() else 0x00.toByte()
+
+        // Write Injector Flow Rate scaling (10x byte) at 0x20164
+        val ifrByte = (injectorFlowRateLbHr * 10).toInt().coerceIn(100, 900)
+        bin[0x20164] = ifrByte.toByte()
+
+        // Write Rev Limit RPM (16-bit big endian) at 0x20166
+        bin[0x20166] = ((revLimitRpm ushr 8) and 0xFF).toByte()
+        bin[0x20167] = (revLimitRpm and 0xFF).toByte()
+
+        // Write Fan 1 & Fan 2 Turn-On temperatures at 0x20168, 0x20169
+        bin[0x20168] = fan1OnTempF.coerceIn(100, 250).toByte()
+        bin[0x20169] = fan2OnTempF.coerceIn(100, 250).toByte()
+
+        // Write VE Multiplier Percent at 0x2016A
+        bin[0x2016A] = veMultiplierPercent.coerceIn(50, 200).toByte()
 
         // Fill remaining spaces with some realistic GM pattern
         for (i in 0x30000 until bin.size step 256) {

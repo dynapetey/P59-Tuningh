@@ -10,7 +10,7 @@ import com.example.data.model.LogSession
 
 @Database(
     entities = [CalFile::class, LogSession::class, LogDataPoint::class],
-    version = 1,
+    version = 3,
     exportSchema = false
 )
 abstract class TunerDatabase : RoomDatabase() {

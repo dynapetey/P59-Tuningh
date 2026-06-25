@@ -1,0 +1,6 @@
+{
+  "name": "OBDX Pro Tuner",
+  "description": "Professional tuning application for OBDX Pro GT and GM controllers",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

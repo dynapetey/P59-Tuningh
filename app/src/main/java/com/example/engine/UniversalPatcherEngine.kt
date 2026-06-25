@@ -19,6 +19,12 @@ data class SparkGridCell(
     var advanceDegrees: Double
 )
 
+data class FuelGridCell(
+    val rpm: Int,
+    val airLoadGrams: Double,
+    var vePercent: Double
+)
+
 class UniversalPatcherEngine {
 
     // Defined GM structure for standard P59 ECM
@@ -74,6 +80,30 @@ class UniversalPatcherEngine {
         return mapCells
     }
 
+    // Creates interactive 3D map representation for volumetric efficiency / base fuel table
+    fun generateFuelMap(veMultiplierPercent: Int): List<FuelGridCell> {
+        val rpmHeaders = listOf(600, 1000, 1600, 2400, 3200, 4000, 4800, 5600, 6400)
+        val airLoadHeaders = listOf(0.08, 0.16, 0.24, 0.32, 0.40, 0.48, 0.60, 0.72, 0.88, 1.00)
+
+        val mapCells = mutableListOf<FuelGridCell>()
+        for (rpm in rpmHeaders) {
+            for (load in airLoadHeaders) {
+                val baseVe = when {
+                    rpm <= 1000 -> 48.0
+                    rpm <= 2400 -> 72.0
+                    rpm <= 4800 -> 88.0
+                    else -> 82.0
+                }
+                val loadModifier = 0.5 + (load * 0.5) // Fuel delivery scales up under heavy load
+                var cellVal = baseVe * loadModifier * (veMultiplierPercent / 100.0)
+                if (cellVal < 20.0) cellVal = 20.0
+                if (cellVal > 150.0) cellVal = 150.0
+                mapCells.add(FuelGridCell(rpm, load, Math.round(cellVal * 10) / 10.0))
+            }
+        }
+        return mapCells
+    }
+
     // Helper to calculate checksum correction
     fun recalculateChecksums(cal: CalFile): CalFile {
         // Correcting all segments to valid matching values
@@ -83,48 +113,7 @@ class UniversalPatcherEngine {
         )
     }
 
-    // List of pre-configured sample tunes for premium visual experience (No placeholder errors)
     fun getPresetCalibrations(): List<CalFile> {
-        return listOf(
-            CalFile(
-                id = -1,
-                name = "Stock Silverado 5.3L (P59)",
-                operatingSystem = "12587603",
-                vatsEnabled = true,
-                flexFuelEnabled = false,
-                mapSensorBarType = 1,
-                leanCruiseEnabled = false,
-                sparkMaxAdvance = 36,
-                targetIdleRpm = 650,
-                isChecksumValid = true,
-                rawHexTrunc = "00FF1C2E03A0FF5B6C1077BB8A00FF2A"
-            ),
-            CalFile(
-                id = -2,
-                name = "2004 Corvette LS1 Manual (P59)",
-                operatingSystem = "12592618",
-                vatsEnabled = true,
-                flexFuelEnabled = true,
-                mapSensorBarType = 1,
-                leanCruiseEnabled = true,
-                sparkMaxAdvance = 38,
-                targetIdleRpm = 800,
-                isChecksumValid = true,
-                rawHexTrunc = "FF013CE0A9A1E0FC6C10AE0044FFB190"
-            ),
-            CalFile(
-                id = -3,
-                name = "Silverado 6.0L Single-Turbo 2Bar (P59 Patched)",
-                operatingSystem = "12587603",
-                vatsEnabled = false, // Disabled for swap
-                flexFuelEnabled = false,
-                mapSensorBarType = 2, // 2-Bar upgrade
-                leanCruiseEnabled = false,
-                sparkMaxAdvance = 26, // lower spark timing for boost
-                targetIdleRpm = 750,
-                isChecksumValid = false, // starts out invalid to show validation!
-                rawHexTrunc = "00FF20C003D0F0A06D1022EEAA00FF1F"
-            )
-        )
+        return emptyList()
     }
 }

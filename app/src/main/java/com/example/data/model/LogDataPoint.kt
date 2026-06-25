@@ -26,5 +26,18 @@ data class LogDataPoint(
     val sparkAdvance: Float,
     val shortTermFuelTrimPercent: Float,
     val widebandO2Afr: Float,
-    val throttlePositionPercent: Int
+    val throttlePositionPercent: Int,
+    // Airflow Tuning
+    val massAirFlowGps: Float = 12.5f,
+    val manifoldAirTempF: Int = 95,
+    // Idle Tuning
+    val desiredIdleRpm: Int = 650,
+    val iacPositionSteps: Int = 45,
+    // Spark & Knock Tuning
+    val dwellTimeMs: Float = 3.2f,
+    val knockRetardDegrees: Float = 0.0f,
+    val knockCount: Int = 0,
+    // Fueling Tuning
+    val longTermFuelTrimPercent: Float = 0.0f,
+    val commandedEquivalenceRatio: Float = 1.0f
 )

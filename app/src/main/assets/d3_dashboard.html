@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>OBDX Pro D3 Telemetry</title>
+    <!-- Load D3.js via CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        body {
+            background-color: #0B0E14;
+            color: #E2E8F0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            padding: 8px;
+            overflow-x: hidden;
+        }
+        .dashboard-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #1E293B;
+            padding-bottom: 6px;
+            margin-bottom: 10px;
+        }
+        .dashboard-title {
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 1.5px;
+            color: #38BDF8;
+            text-transform: uppercase;
+        }
+        .status-badge {
+            font-size: 9px;
+            font-weight: bold;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background-color: rgba(16, 185, 129, 0.15);
+            color: #10B981;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            text-shadow: 0 0 5px rgba(16, 185, 129, 0.5);
+        }
+        /* Parameters grid */
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .param-card {
+            background: #141A24;
+            border: 1px solid #232D3F;
+            border-radius: 6px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
+            overflow: hidden;
+        }
+        .param-card.alert {
+            border-color: #EF4444;
+            box-shadow: 0 0 8px rgba(239, 68, 68, 0.15);
+        }
+        .param-label {
+            font-size: 9px;
+            font-weight: 700;
+            color: #94A3B8;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+        .param-value-container {
+            display: flex;
+            align-items: baseline;
+            margin-top: 4px;
+        }
+        .param-value {
+            font-size: 18px;
+            font-weight: 800;
+            color: #FFFFFF;
+            font-family: monospace;
+        }
+        .param-unit {
+            font-size: 8px;
+            color: #64748B;
+            margin-left: 4px;
+            font-weight: bold;
+        }
+        .param-sub {
+            font-size: 8.5px;
+            color: #64748B;
+            margin-top: 2px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .param-sub span {
+            color: #38BDF8;
+            font-family: monospace;
+            font-weight: bold;
+        }
+        /* D3 Chart container */
+        .chart-container {
+            background: #141A24;
+            border: 1px solid #232D3F;
+            border-radius: 6px;
+            padding: 8px;
+            margin-bottom: 6px;
+            position: relative;
+        }
+        .chart-title {
+            font-size: 9px;
+            font-weight: 800;
+            color: #94A3B8;
+            letter-spacing: 0.8px;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+        }
+        #d3-timeline-chart {
+            width: 100%;
+            height: 140px;
+        }
+        /* Neon Colors & Glows */
+        .glow-blue { text-shadow: 0 0 8px rgba(56, 189, 248, 0.6); color: #38BDF8; }
+        .glow-green { text-shadow: 0 0 8px rgba(16, 185, 129, 0.6); color: #10B981; }
+        .glow-gold { text-shadow: 0 0 8px rgba(245, 158, 11, 0.6); color: #F59E0B; }
+        .glow-red { text-shadow: 0 0 8px rgba(239, 68, 68, 0.8); color: #EF4444; }
+        .glow-purple { text-shadow: 0 0 8px rgba(168, 85, 247, 0.6); color: #A855F7; }
+        
+        .axis text {
+            font-size: 7.5px;
+            fill: #64748B;
+            font-family: monospace;
+        }
+        .axis path, .axis line {
+            stroke: #222B3C;
+        }
+        .legend-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 4px;
+            justify-content: center;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            font-size: 8px;
+            font-weight: bold;
+            color: #94A3B8;
+        }
+        .legend-color {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            margin-right: 4px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="dashboard-header">
+        <span class="dashboard-title">D3.js ENGINE ANALYZER</span>
+        <span class="status-badge" id="vpw-status">VPW ACTIVE</span>
+    </div>
+
+    <!-- Parameter Displays (Airflow, Idle, Spark, Knock, Fueling) -->
+    <div class="grid-container">
+        
+        <!-- 1. AIRFLOW TUNING CARD -->
+        <div class="param-card">
+            <span class="param-label">1. Airflow (MAF)</span>
+            <div class="param-value-container">
+                <span class="param-value glow-blue" id="val-maf">12.5</span>
+                <span class="param-unit">g/s</span>
+            </div>
+            <div class="param-sub">
+                MAT Temp: <span id="val-mat">95°F</span>
+            </div>
+        </div>
+
+        <!-- 2. IDLE TUNING CARD -->
+        <div class="param-card">
+            <span class="param-label">2. Idle Speed</span>
+            <div class="param-value-container">
+                <span class="param-value glow-green" id="val-rpm">650</span>
+                <span class="param-unit">RPM</span>
+            </div>
+            <div class="param-sub">
+                Target / IAC: <span id="val-idle-iac">650 / 45</span>
+            </div>
+        </div>
+
+        <!-- 3. SPARK TUNING CARD -->
+        <div class="param-card">
+            <span class="param-label">3. Spark Advance</span>
+            <div class="param-value-container">
+                <span class="param-value glow-purple" id="val-spark">14.5</span>
+                <span class="param-unit">°</span>
+            </div>
+            <div class="param-sub">
+                Dwell Time: <span id="val-dwell">3.2 ms</span>
+            </div>
+        </div>
+
+        <!-- 4. KNOCK TUNING CARD -->
+        <div id="card-knock" class="param-card">
+            <span class="param-label">4. Knock Retard</span>
+            <div class="param-value-container">
+                <span class="param-value" id="val-kr" style="color: #94A3B8;">0.0</span>
+                <span class="param-unit">° KR</span>
+            </div>
+            <div class="param-sub">
+                Detonations: <span id="val-knock-count">0</span>
+            </div>
+        </div>
+
+        <!-- 5. FUELING TUNING CARD -->
+        <div class="param-card" style="grid-column: span 2;">
+            <span class="param-label">5. Fueling Trims & equivalence</span>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+                <div class="param-value-container">
+                    <span class="param-value glow-gold" id="val-afr">14.70</span>
+                    <span class="param-unit">AFR</span>
+                </div>
+                <div style="display: flex; gap: 10px; font-size: 9px; font-family: monospace;">
+                    <div>STFT: <span id="val-stft" style="color:#10B981; font-weight:bold;">0.0%</span></div>
+                    <div>LTFT: <span id="val-ltft" style="color:#F59E0B; font-weight:bold;">0.0%</span></div>
+                    <div>CMD: <span id="val-cmd-lambda" style="color:#38BDF8; font-weight:bold;">1.00λ</span></div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Timeline Chart -->
+    <div class="chart-container">
+        <div class="chart-title">D3 Real-time Scroll Graph (60 Frames)</div>
+        <svg id="d3-timeline-chart"></svg>
+        <div class="legend-container">
+            <div class="legend-item"><span class="legend-color" style="background: #38BDF8;"></span>MAF</div>
+            <div class="legend-item"><span class="legend-color" style="background: #10B981;"></span>RPM</div>
+            <div class="legend-item"><span class="legend-color" style="background: #A855F7;"></span>SPARK</div>
+            <div class="legend-item"><span class="legend-color" style="background: #EF4444;"></span>KR</div>
+            <div class="legend-item"><span class="legend-color" style="background: #F59E0B;"></span>AFR</div>
+        </div>
+    </div>
+
+    <script>
+        // Store historical data
+        const maxDataPoints = 60;
+        const dataHistory = [];
+        
+        // Setup initial empty history
+        for (let i = 0; i < maxDataPoints; i++) {
+            dataHistory.push({
+                index: i,
+                rpm: 0,
+                maf: 0,
+                spark: 0,
+                kr: 0,
+                afr: 14.7
+            });
+        }
+
+        let svg, g, xScale, yScale, lineRpm, lineMaf, lineSpark, lineKr, lineAfr;
+        let chartWidth = 0, chartHeight = 0;
+
+        function initD3Chart() {
+            const container = document.getElementById("d3-timeline-chart");
+            const rect = container.getBoundingClientRect();
+            chartWidth = rect.width;
+            chartHeight = rect.height;
+
+            const margin = { top: 10, right: 10, bottom: 20, left: 25 };
+            const innerWidth = chartWidth - margin.left - margin.right;
+            const innerHeight = chartHeight - margin.top - margin.bottom;
+
+            svg = d3.select("#d3-timeline-chart")
+                .html("") // clear
+                .attr("width", chartWidth)
+                .attr("height", chartHeight);
+
+            // Add linear glow filters
+            const defs = svg.append("defs");
+            const filters = ["blue", "green", "purple", "red", "gold"];
+            const colors = ["#38BDF8", "#10B981", "#A855F7", "#EF4444", "#F59E0B"];
+            
+            filters.forEach((id, i) => {
+                const filter = defs.append("filter")
+                    .attr("id", `glow-${id}`)
+                    .attr("x", "-20%")
+                    .attr("y", "-20%")
+                    .attr("width", "140%")
+                    .attr("height", "140%");
+                filter.append("feGaussianBlur")
+                    .attr("stdDeviation", "2.5")
+                    .attr("result", "blur");
+                filter.append("feMerge")
+                    .selectAll("feMergeNode")
+                    .data(["blur", "SourceGraphic"])
+                    .enter().append("feMergeNode")
+                    .attr("in", d => d);
+            });
+
+            g = svg.append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            // Scales
+            xScale = d3.scaleLinear()
+                .domain([0, maxDataPoints - 1])
+                .range([0, innerWidth]);
+
+            yScale = d3.scaleLinear()
+                .domain([0, 100]) // Norm scale (%)
+                .range([innerHeight, 0]);
+
+            // X-Axis (invisible grid)
+            g.append("g")
+                .attr("class", "axis x-axis")
+                .attr("transform", `translate(0,${innerHeight})`)
+                .call(d3.axisBottom(xScale).ticks(5).tickFormat(""));
+
+            // Y-Axis
+            g.append("g")
+                .attr("class", "axis y-axis")
+                .call(d3.axisLeft(yScale).ticks(4).tickFormat(d => d + "%"));
+
+            // Grid lines
+            g.append("g")
+                .attr("class", "grid")
+                .call(d3.axisLeft(yScale).ticks(4).tickSize(-innerWidth).tickFormat(""));
+
+            g.selectAll(".grid line")
+                .style("stroke", "#1E293B")
+                .style("stroke-dasharray", "2,2");
+            g.select(".grid path").remove();
+
+            // Line Generators
+            // Normalize values to fit inside 0-100% yScale
+            lineRpm = d3.line()
+                .x(d => xScale(d.index))
+                .y(d => yScale(Math.min(100, (d.rpm / 7000) * 100)));
+
+            lineMaf = d3.line()
+                .x(d => xScale(d.index))
+                .y(d => yScale(Math.min(100, (d.maf / 240) * 100)));
+
+            lineSpark = d3.line()
+                .x(d => xScale(d.index))
+                .y(d => yScale(Math.min(100, ((d.spark + 10) / 55) * 100))); // range -10 to 45 deg
+
+            lineKr = d3.line()
+                .x(d => xScale(d.index))
+                .y(d => yScale(Math.min(100, (d.kr / 8) * 100))); // range 0-8 deg KR
+
+            lineAfr = d3.line()
+                .x(d => xScale(d.index))
+                .y(d => yScale(Math.min(100, ((d.afr - 10) / 8) * 100))); // range 10-18 AFR
+
+            // Render Paths
+            g.append("path")
+                .datum(dataHistory)
+                .attr("class", "path-maf")
+                .attr("fill", "none")
+                .attr("stroke", "#38BDF8")
+                .attr("stroke-width", 2)
+                .attr("filter", "url(#glow-blue)");
+
+            g.append("path")
+                .datum(dataHistory)
+                .attr("class", "path-rpm")
+                .attr("fill", "none")
+                .attr("stroke", "#10B981")
+                .attr("stroke-width", 2)
+                .attr("filter", "url(#glow-green)");
+
+            g.append("path")
+                .datum(dataHistory)
+                .attr("class", "path-spark")
+                .attr("fill", "none")
+                .attr("stroke", "#A855F7")
+                .attr("stroke-width", 1.5)
+                .attr("filter", "url(#glow-purple)");
+
+            g.append("path")
+                .datum(dataHistory)
+                .attr("class", "path-kr")
+                .attr("fill", "none")
+                .attr("stroke", "#EF4444")
+                .attr("stroke-width", 2.5)
+                .attr("filter", "url(#glow-red)");
+
+            g.append("path")
+                .datum(dataHistory)
+                .attr("class", "path-afr")
+                .attr("fill", "none")
+                .attr("stroke", "#F59E0B")
+                .attr("stroke-width", 1.5)
+                .attr("filter", "url(#glow-gold)");
+        }
+
+        function updateD3Chart() {
+            if (!svg) return;
+            
+            // Re-index history items
+            dataHistory.forEach((d, idx) => { d.index = idx; });
+
+            g.select(".path-maf").datum(dataHistory).attr("d", lineMaf);
+            g.select(".path-rpm").datum(dataHistory).attr("d", lineRpm);
+            g.select(".path-spark").datum(dataHistory).attr("d", lineSpark);
+            g.select(".path-kr").datum(dataHistory).attr("d", lineKr);
+            g.select(".path-afr").datum(dataHistory).attr("d", lineAfr);
+        }
+
+        // Bridge update trigger
+        function updateSensorData(jsonStr) {
+            try {
+                const data = JSON.parse(jsonStr);
+                
+                // 1. Airflow
+                const maf = data.massAirFlowGps || 12.5;
+                const mat = data.manifoldAirTempF || 95;
+                document.getElementById("val-maf").innerText = maf.toFixed(1);
+                document.getElementById("val-mat").innerText = mat + "°F";
+
+                // 2. Idle
+                const rpm = data.rpm || 0;
+                const desiredRpm = data.desiredIdleRpm || 650;
+                const iacSteps = data.iacPositionSteps || 45;
+                document.getElementById("val-rpm").innerText = rpm;
+                document.getElementById("val-idle-iac").innerText = desiredRpm + " / " + iacSteps;
+
+                // 3. Spark
+                const spark = data.sparkAdvance || 0.0;
+                const dwell = data.dwellTimeMs || 3.2;
+                document.getElementById("val-spark").innerText = spark.toFixed(1);
+                document.getElementById("val-dwell").innerText = dwell.toFixed(1) + " ms";
+
+                // 4. Knock
+                const kr = data.knockRetardDegrees || 0.0;
+                const kCount = data.knockCount || 0;
+                const krEl = document.getElementById("val-kr");
+                const krCard = document.getElementById("card-knock");
+                
+                krEl.innerText = kr.toFixed(1);
+                document.getElementById("val-knock-count").innerText = kCount;
+                
+                if (kr > 0) {
+                    krEl.className = "param-value glow-red";
+                    krCard.classList.add("alert");
+                } else {
+                    krEl.className = "param-value";
+                    krEl.style.color = "#94A3B8";
+                    krCard.classList.remove("alert");
+                }
+
+                // 5. Fueling
+                const afr = data.widebandO2Afr || 14.7;
+                const stft = data.shortTermFuelTrimPercent || 0.0;
+                const ltft = data.longTermFuelTrimPercent || 0.0;
+                const cmd = data.commandedEquivalenceRatio || 1.0;
+
+                document.getElementById("val-afr").innerText = afr.toFixed(2);
+                
+                const stftEl = document.getElementById("val-stft");
+                stftEl.innerText = (stft >= 0 ? "+" : "") + stft.toFixed(1) + "%";
+                stftEl.style.color = stft > 5 ? "#EF4444" : stft < -5 ? "#38BDF8" : "#10B981";
+
+                const ltftEl = document.getElementById("val-ltft");
+                ltftEl.innerText = (ltft >= 0 ? "+" : "") + ltft.toFixed(1) + "%";
+                ltftEl.style.color = ltft > 5 ? "#EF4444" : ltft < -5 ? "#38BDF8" : "#F59E0B";
+
+                document.getElementById("val-cmd-lambda").innerText = cmd.toFixed(2) + "λ";
+
+                // Push to timeline and scroll
+                dataHistory.shift();
+                dataHistory.push({
+                    index: maxDataPoints - 1,
+                    rpm: rpm,
+                    maf: maf,
+                    spark: spark,
+                    kr: kr,
+                    afr: afr
+                });
+
+                updateD3Chart();
+
+            } catch (e) {
+                console.error("Failed to parse live JSON telemetry: ", e);
+            }
+        }
+
+        // Initialize on load
+        window.addEventListener("load", () => {
+            initD3Chart();
+            
+            // Handle window resizing
+            window.addEventListener("resize", () => {
+                initD3Chart();
+                updateD3Chart();
+            });
+        });
+    </script>
+</body>
+</html>
