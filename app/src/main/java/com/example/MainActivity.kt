@@ -131,6 +131,7 @@ fun TunerDashboardScreen(
                 0 -> FlasherTabContent(viewModel)
                 1 -> LoggerTabContent(viewModel)
                 2 -> PatcherTabContent(viewModel)
+                3 -> com.example.ui.GeminiTunerTabContent(viewModel)
             }
         }
     }
@@ -149,7 +150,8 @@ fun TuningTabRow(
     val items = listOf(
         TuningTabItem(0, "PCM FLASHER", Icons.Default.PlayArrow),
         TuningTabItem(1, "PCM LOGGER", Icons.Default.List),
-        TuningTabItem(2, "UNIVERSAL PATCHER", Icons.Default.Create)
+        TuningTabItem(2, "UNIVERSAL PATCHER", Icons.Default.Create),
+        TuningTabItem(3, "GEMINI TUNER", Icons.Default.Star)
     )
 
     Row(
@@ -206,6 +208,7 @@ fun glowingColorForTab(idx: Int): Color {
         0 -> GlowingBlue
         1 -> NeonGreen
         2 -> AmberGold
+        3 -> TerminalPurple
         else -> Color.White
     }
 }

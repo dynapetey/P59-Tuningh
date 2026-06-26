@@ -7,6 +7,9 @@ import com.example.data.database.TunerDatabase
 import com.example.data.model.CalFile
 import com.example.data.model.LogDataPoint
 import com.example.data.model.LogSession
+import com.example.data.model.ChatMessage
+import com.example.data.model.MessageSender
+import com.example.data.model.TuningSuggestions
 import com.example.data.repository.TunerRepository
 import com.example.engine.CalibrationSegment
 import com.example.engine.SparkGridCell
@@ -752,6 +755,344 @@ class TunerViewModel(application: Application) : AndroidViewModel(application) {
             )
             val newId = repository.insertCalibration(newCal).toInt()
             selectCalFile(newCal.copy(id = newId))
+        }
+    }
+
+    // --- GEMINI CHAT TUNER STATES ---
+    private val _engineModifications = MutableStateFlow("")
+    val engineModifications: StateFlow<String> = _engineModifications
+
+    private val _chatMessages = MutableStateFlow<List<ChatMessage>>(listOf(
+        ChatMessage(
+            sender = MessageSender.GEMINI,
+            text = "Welcome to Gemini AI Tuner! I can analyze your latest recorded log session against your newest calibration file, factor in your custom engine modifications, and suggest custom adjustments. Type a message or click 'Auto Analyze' to begin."
+        )
+    ))
+    val chatMessages: StateFlow<List<ChatMessage>> = _chatMessages
+
+    private val _chatLoading = MutableStateFlow(false)
+    val chatLoading: StateFlow<Boolean> = _chatLoading
+
+    fun updateEngineModifications(text: String) {
+        _engineModifications.value = text
+    }
+
+    fun clearChat() {
+        _chatMessages.value = listOf(
+            ChatMessage(
+                sender = MessageSender.GEMINI,
+                text = "Welcome to Gemini AI Tuner! I can analyze your latest recorded log session against your newest calibration file, factor in your custom engine modifications, and suggest custom adjustments. Type a message or click 'Auto Analyze' to begin."
+            )
+        )
+    }
+
+    fun sendChatMessage(userText: String) {
+        if (userText.isBlank()) return
+        
+        val userMsg = ChatMessage(
+            sender = MessageSender.USER,
+            text = userText
+        )
+        _chatMessages.value = _chatMessages.value + userMsg
+        
+        viewModelScope.launch {
+            _chatLoading.value = true
+            try {
+                // 1. Get newest Calibration (last saved/read bin file)
+                val calibrationsList = calibrations.value
+                val newestCal = calibrationsList.maxByOrNull { it.lastModified } ?: _selectedCal.value
+                
+                // 2. Get newest recorded Log Session and its points
+                val newestLog = logSessions.value.firstOrNull()
+                val logPoints = if (newestLog != null) {
+                    repository.getPointsForSession(newestLog.id).first()
+                } else {
+                    emptyList()
+                }
+                
+                // 3. Build detailed prompt
+                val calDesc = if (newestCal != null) {
+                    """
+                    Newest Calibration File: '${newestCal.name}'
+                    - Operating System ID: ${newestCal.operatingSystem}
+                    - MAP Sensor Type: ${newestCal.mapSensorBarType}-Bar
+                    - Absolute Max Spark Timing: ${newestCal.sparkMaxAdvance}° BTDC
+                    - Target Idle Speed: ${newestCal.targetIdleRpm} RPM
+                    - Injector Flow Rate Scaling: ${newestCal.injectorFlowRateLbHr} lb/hr
+                    - Rev Limit Cutoff: ${newestCal.revLimitRpm} RPM
+                    - Cooling Fan 1 Trigger Temp: ${newestCal.fan1OnTempF}°F
+                    - Cooling Fan 2 Trigger Temp: ${newestCal.fan2OnTempF}°F
+                    - Volumetric Efficiency (VE) Global Multiplier: ${newestCal.veMultiplierPercent}%
+                    - VATS: ${if (newestCal.vatsEnabled) "Enabled" else "Disabled"}
+                    - Flex Fuel: ${if (newestCal.flexFuelEnabled) "Enabled" else "Disabled"}
+                    - Lean Cruise: ${if (newestCal.leanCruiseEnabled) "Enabled" else "Disabled"}
+                    """.trimIndent()
+                } else {
+                    "No calibration file currently loaded in workspace."
+                }
+                
+                val logDesc = if (newestLog != null && logPoints.isNotEmpty()) {
+                    val avgRpm = logPoints.map { it.rpm }.average().toInt()
+                    val maxRpm = logPoints.map { it.rpm }.maxOrNull() ?: 0
+                    val maxMph = logPoints.map { it.mph }.maxOrNull() ?: 0
+                    val avgAfr = logPoints.map { it.widebandO2Afr }.average()
+                    val avgStft = logPoints.map { it.shortTermFuelTrimPercent }.average()
+                    val maxCoolant = logPoints.map { it.coolantTempF }.maxOrNull() ?: 0
+                    
+                    """
+                    Latest Recorded Log Session: '${newestLog.sessionName}' (ID: ${newestLog.id})
+                    - Duration: ${newestLog.durationSeconds} seconds
+                    - Summary Statistics:
+                      * Average RPM: $avgRpm / Max RPM: $maxRpm
+                      * Max Speed: $maxMph MPH
+                      * Average AFR: ${String.format("%.2f", avgAfr)}:1 (Stoichiometric target is 14.68)
+                      * Average Short Term Fuel Trim: ${String.format("%.2f", avgStft)}%
+                      * Max Coolant Temperature: $maxCoolant°F
+                    - Sample Data Points (showing offset, RPM, MAP, Coolant, STFT, AFR, Throttle):
+                    ${logPoints.take(25).joinToString("\n") { p ->
+                        "  * Offset: ${p.timestampOffsetMs}ms, RPM: ${p.rpm}, MAP: ${p.mapKpa}kPa, Temp: ${p.coolantTempF}°F, STFT: ${p.shortTermFuelTrimPercent}%, AFR: ${p.widebandO2Afr}:1, Throttle: ${p.throttlePositionPercent}%"
+                    }}
+                    """.trimIndent()
+                } else {
+                    "No recorded vehicle log session found in database. Please run a logging session first to provide live vehicle diagnostics."
+                }
+                
+                val engineMods = _engineModifications.value
+                val modsDesc = if (engineMods.isNotBlank()) {
+                    "User Specified Engine Modifications:\n$engineMods"
+                } else {
+                    "No engine modifications specified yet by user."
+                }
+                
+                val prompt = """
+                You are Gemini, an expert automotive calibrations engineer and AI tuner specializing in the GM Gen III LS1 P59 ECM (5.3L V8 applications).
+                The user is querying you in a tuner support chat.
+                
+                SYSTEM STATE INFORMATION:
+                
+                === CALIBRATION METADATA ===
+                $calDesc
+                
+                === LIVE VEHICLE LOGS ===
+                $logDesc
+                
+                === ENGINE MODIFICATIONS ===
+                $modsDesc
+                
+                === TUNING MATH, EQUATIONS, AND WORKFLOW ===
+                Use these mathematical models to formulate your calibrations reasoning:
+                1. Mass Air Flow (MAF) Tuning: 
+                   Airflow (g/sec) = MAF Frequency * Table Scalar
+                2. Volumetric Efficiency (VE) Math (Ideal Gas Law for cylinder airmass in Speed Density):
+                   Air Mass (g/cyl) = (MAP * VE Percentage * Displacement * Volumetric Constant) / Intake Air Temp (K)
+                   * Volumetric Constant: 0.28705 (for standard engine sizes, scaled to cylinder volume)
+                3. Injector Flow Rate Scaling:
+                   New Flow (lb/hr) = Old Flow * sqrt(New Pressure / Old Pressure)
+                4. Data Correction & Trim math:
+                   * Fuel Trim Error Correction: New Table Value = Old Table Value * (1 + Fuel Trim % / 100)
+                   * Wideband O2 Error Correction: Multiplier = Actual AFR / Commanded AFR
+                5. Spark & Timing:
+                   Final Spark = Base High/Low Octane Spark Table + ECT Spark Modifier + IAT Spark Modifier - Retard
+                   * Baseline target at WOT (wide open throttle): 26° - 32° on pump gas, depending on cylinder pressure.
+                6. Standard Workflow & Calibration Order:
+                   * Disable Trims & Limits: Disable LTFT, Catalytic Protection, and Torque Management for logging clean data.
+                   * Setup Scanners: Create histograms mapping RPM on X-axis and MAP/Airmass on Y-axis.
+                   * Log & Multiply: Record the error logs and multiply the correction error percentages directly into VE/MAF tables.
+                   * Spark Tuning: Smooth the spark timing tables, advancing safely until knock is detected, then pull 1-2° in knock-prone zones.
+
+                === USER CHAT MESSAGE ===
+                "$userText"
+                
+                INSTRUCTIONS:
+                1. Answer the user's question with precise professional automotive tuning expertise.
+                2. Analyze the calibration metadata and any recorded vehicle logs or engine modifications.
+                3. If the logs show fueling errors (STFT / AFR deviates from 14.68), cooling issues, or the engine modifications demand parameter updates (e.g., larger injectors need flow rate scaled, aggressive cams need higher idle, performance builds want higher rev limit), you MUST suggest corresponding calibrations adjustments.
+                4. When suggesting tuning changes, set "hasTuningSuggestions" to true and populate the "tuningSuggestions" object with safe, optimized values.
+                   * targetIdleRpm: 750 to 950 RPM
+                   * sparkMaxAdvance: 24 to 42 degrees
+                   * injectorFlowRateLbHr: 24.8 to 60.0 lb/hr
+                   * revLimitRpm: 5500 to 6800 RPM
+                   * fan1OnTempF: 180 to 205 °F
+                   * fan2OnTempF: 185 to 215 °F
+                   * veMultiplierPercent: 90 to 130 %
+                   * rationale: Brief explanation of why these specific numbers were recommended.
+                   * logSessionId: Use the ID of the analyzed log session (${newestLog?.id ?: "null"}), or null if none.
+                5. If no adjustments are needed or if you cannot make precise recommendations, set "hasTuningSuggestions" to false.
+                
+                Your response MUST be a valid JSON object matching the following JSON schema. Do not include markdown formatting wraps around the JSON block, just output raw JSON:
+                {
+                  "text": "Your markdown formatted chat response message...",
+                  "hasTuningSuggestions": true_or_false,
+                  "tuningSuggestions": {
+                    "targetIdleRpm": <int>,
+                    "sparkMaxAdvance": <int>,
+                    "injectorFlowRateLbHr": <double>,
+                    "revLimitRpm": <int>,
+                    "fan1OnTempF": <int>,
+                    "fan2OnTempF": <int>,
+                    "veMultiplierPercent": <int>,
+                    "rationale": "<string>",
+                    "logSessionId": <int_or_null>
+                  }
+                }
+                """.trimIndent()
+                
+                val apiKey = BuildConfig.GEMINI_API_KEY
+                if (apiKey.isEmpty() || apiKey == "YOUR_GEMINI_API_KEY" || apiKey == "PLACEHOLDER_KEY") {
+                    delay(1500)
+                    // Fallback to offline heuristic chat reply
+                    val replyText = "I see your query! However, the Gemini API Key is not configured. Here is an offline mock response based on your inputs:\n\n" +
+                            "**Calibration analyzed:** ${newestCal?.name ?: "None"}\n" +
+                            "**Latest Log analyzed:** ${newestLog?.sessionName ?: "None"}\n" +
+                            "**Engine mods:** ${if (engineMods.isNotBlank()) engineMods else "None"}\n\n" +
+                            "Please add a valid `GEMINI_API_KEY` in the AI Studio Secrets panel to enable real-time calibrations analysis."
+                    
+                    val mockSuggestions = if (newestCal != null) {
+                        TuningSuggestions(
+                            targetIdleRpm = if (engineMods.lowercase().contains("cam")) 800 else newestCal.targetIdleRpm,
+                            sparkMaxAdvance = (newestCal.sparkMaxAdvance + 2).coerceIn(24, 40),
+                            injectorFlowRateLbHr = newestCal.injectorFlowRateLbHr,
+                            revLimitRpm = if (engineMods.lowercase().contains("valvesprings")) 6200 else newestCal.revLimitRpm,
+                            fan1OnTempF = 190,
+                            fan2OnTempF = 200,
+                            veMultiplierPercent = 105,
+                            rationale = "Generated via local heuristic AI analyzer. Adjusted idle and rev limit based on modifications, and tweaked cooling fan parameters.",
+                            logSessionId = newestLog?.id
+                        )
+                    } else null
+
+                    _chatMessages.value = _chatMessages.value + ChatMessage(
+                        sender = MessageSender.GEMINI,
+                        text = replyText,
+                        tuningSuggestions = mockSuggestions
+                    )
+                    return@launch
+                }
+                
+                val jsonRequest = JSONObject()
+                val contentsObj = org.json.JSONArray()
+                val contentObj = JSONObject()
+                val partsObj = org.json.JSONArray()
+                val partObj = JSONObject()
+                partObj.put("text", prompt)
+                partsObj.put(partObj)
+                contentObj.put("parts", partsObj)
+                contentsObj.put(contentObj)
+                jsonRequest.put("contents", contentsObj)
+
+                val generationConfig = JSONObject()
+                generationConfig.put("responseMimeType", "application/json")
+                jsonRequest.put("generationConfig", generationConfig)
+
+                val mediaType = "application/json; charset=utf-8".toMediaType()
+                val body = jsonRequest.toString().toRequestBody(mediaType)
+                val request = Request.Builder()
+                    .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey")
+                    .post(body)
+                    .build()
+
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .writeTimeout(30, TimeUnit.SECONDS)
+                    .build()
+
+                val responseJsonStr = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val response = client.newCall(request).execute()
+                    if (response.isSuccessful) response.body?.string() else null
+                }
+
+                if (responseJsonStr != null) {
+                    val responseJson = JSONObject(responseJsonStr)
+                    val candidates = responseJson.getJSONArray("candidates")
+                    val responseText = candidates.getJSONObject(0)
+                        .getJSONObject("content")
+                        .getJSONArray("parts")
+                        .getJSONObject(0)
+                        .getString("text")
+                    
+                    val resObj = JSONObject(responseText)
+                    val replyText = resObj.getString("text")
+                    val hasSuggestions = resObj.optBoolean("hasTuningSuggestions", false)
+                    
+                    var tuningSuggestions: TuningSuggestions? = null
+                    if (hasSuggestions && resObj.has("tuningSuggestions")) {
+                        val suggObj = resObj.getJSONObject("tuningSuggestions")
+                        tuningSuggestions = TuningSuggestions(
+                            targetIdleRpm = suggObj.optInt("targetIdleRpm", newestCal?.targetIdleRpm ?: 650),
+                            sparkMaxAdvance = suggObj.optInt("sparkMaxAdvance", newestCal?.sparkMaxAdvance ?: 36),
+                            injectorFlowRateLbHr = suggObj.optDouble("injectorFlowRateLbHr", newestCal?.injectorFlowRateLbHr ?: 24.8),
+                            revLimitRpm = suggObj.optInt("revLimitRpm", newestCal?.revLimitRpm ?: 5900),
+                            fan1OnTempF = suggObj.optInt("fan1OnTempF", newestCal?.fan1OnTempF ?: 205),
+                            fan2OnTempF = suggObj.optInt("fan2OnTempF", newestCal?.fan2OnTempF ?: 215),
+                            veMultiplierPercent = suggObj.optInt("veMultiplierPercent", newestCal?.veMultiplierPercent ?: 100),
+                            rationale = suggObj.optString("rationale", "AI calibration suggestions."),
+                            logSessionId = if (suggObj.isNull("logSessionId")) null else suggObj.optInt("logSessionId")
+                        )
+                    }
+                    
+                    _chatMessages.value = _chatMessages.value + ChatMessage(
+                        sender = MessageSender.GEMINI,
+                        text = replyText,
+                        tuningSuggestions = tuningSuggestions
+                    )
+                } else {
+                    _chatMessages.value = _chatMessages.value + ChatMessage(
+                        sender = MessageSender.GEMINI,
+                        text = "I received an error contacting the server. Please check your network connection and API key."
+                    )
+                }
+            } catch (e: Exception) {
+                _chatMessages.value = _chatMessages.value + ChatMessage(
+                    sender = MessageSender.GEMINI,
+                    text = "Failed to process chat: ${e.message}"
+                )
+            } finally {
+                _chatLoading.value = false
+            }
+        }
+    }
+
+    fun applyTuningSuggestions(suggestions: TuningSuggestions) {
+        viewModelScope.launch {
+            // Find newest CalFile
+            val calibrationsList = calibrations.value
+            val newestCal = calibrationsList.maxByOrNull { it.lastModified } ?: _selectedCal.value ?: return@launch
+            
+            val updatedCal = newestCal.copy(
+                targetIdleRpm = suggestions.targetIdleRpm,
+                sparkMaxAdvance = suggestions.sparkMaxAdvance,
+                injectorFlowRateLbHr = suggestions.injectorFlowRateLbHr,
+                revLimitRpm = suggestions.revLimitRpm,
+                fan1OnTempF = suggestions.fan1OnTempF,
+                fan2OnTempF = suggestions.fan2OnTempF,
+                veMultiplierPercent = suggestions.veMultiplierPercent,
+                isChecksumValid = false,
+                lastModified = System.currentTimeMillis()
+            )
+            
+            // 1. Save updated bin file
+            val newId = repository.insertCalibration(updatedCal).toInt()
+            selectCalFile(updatedCal.copy(id = newId))
+            _calSegments.value = patcherEngine.loadSegmentsForCal(updatedCal)
+            _sparkTimingGrid.value = patcherEngine.generateSparkMap(suggestions.sparkMaxAdvance)
+            _fuelVeGrid.value = patcherEngine.generateFuelMap(suggestions.veMultiplierPercent)
+            
+            obdxManager.emitTerminalLog("[GEMINI AI CHAT TUNER] Flying custom AI calibration into tuner workspace...")
+            obdxManager.emitTerminalLog("Parameters updated: Idle = ${suggestions.targetIdleRpm} RPM, Spark = ${suggestions.sparkMaxAdvance}°, Injector Scaling = ${suggestions.injectorFlowRateLbHr} lb/hr")
+            
+            // 2. Delete used log file so it is not used again
+            val logId = suggestions.logSessionId
+            if (logId != null) {
+                repository.deleteSession(logId)
+                obdxManager.emitTerminalLog("[GEMINI AI CHAT TUNER] Successfully deleted used Log Session #$logId to prevent re-tuning on stale data.")
+            }
+            
+            // 3. Add system confirmation message to chat history
+            _chatMessages.value = _chatMessages.value + ChatMessage(
+                sender = MessageSender.GEMINI,
+                text = "🚀 **Tuning Suggestions applied successfully!**\n\n- Updated Calibration saved as active: `${updatedCal.name}` (ID: $newId)\n- Used Log Session #${logId ?: "N/A"} deleted from database.\n\nReady for writing to the vehicle PCM!"
+            )
         }
     }
 }
