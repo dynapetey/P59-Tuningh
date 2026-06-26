@@ -85,6 +85,7 @@ fun TunerDashboardScreen(
     viewModel: TunerViewModel = viewModel()
 ) {
     val context = LocalContext.current
+
     val activeTab by viewModel.activeTab.collectAsState()
     val obdxState by viewModel.obdxManager.connectionState.collectAsState()
     val voltage by viewModel.obdxManager.voltage.collectAsState()
@@ -2315,6 +2316,13 @@ fun PatcherTabContent(viewModel: TunerViewModel) {
             }
         }
 
+        // Tune Persistence side-by-side comparison (Most Recent and Next Modified)
+        item {
+            val mostRecent by viewModel.mostRecentTune.collectAsState()
+            val nextModified by viewModel.nextModifiedTune.collectAsState()
+            TuneComparisonWidget(mostRecent = mostRecent, nextModified = nextModified)
+        }
+
         selectedCal?.let { cal ->
             // Automated Segment Checksum boundary correction module (Universal patcher style)
             item {
@@ -3478,4 +3486,178 @@ fun D3DashboardView(viewModel: TunerViewModel, modifier: Modifier = Modifier) {
             .border(1.dp, BorderGrey, RoundedCornerShape(6.dp))
             .clip(RoundedCornerShape(6.dp))
     )
+}
+
+@Composable
+fun TuneComparisonWidget(
+    mostRecent: CalFile?,
+    nextModified: CalFile?
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = CardSurfaceColor),
+        border = BorderStroke(1.dp, BorderGrey),
+        modifier = Modifier.fillMaxWidth().testTag("tune_comparison_card")
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, tint = AmberGold, modifier = Modifier.size(18.dp))
+                    Text(
+                        text = "MOST RECENT VS. NEXT MODIFIED TUNE COMPILER",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                }
+
+                TextButton(
+                    onClick = { isExpanded = !isExpanded },
+                    contentPadding = PaddingValues(0.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Text(
+                        text = if (isExpanded) "COLLAPSE" else "COMPARE PARAMETERS",
+                        color = GlowingBlue,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Two-column side-by-side overview
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Column 1: Most Recent
+                Card(
+                    modifier = Modifier.weight(1f),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF14171D)),
+                    border = BorderStroke(1.dp, NeonGreen.copy(alpha = 0.3f))
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Box(modifier = Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(NeonGreen))
+                            Text("MOST RECENT TUNE", color = NeonGreen, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                        }
+                        if (mostRecent != null) {
+                            Text(mostRecent.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                            Text("OS: ${mostRecent.operatingSystem}", color = Color.LightGray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                            Text("Idle: ${mostRecent.targetIdleRpm} RPM | Rev: ${mostRecent.revLimitRpm}", color = Color.Gray, fontSize = 9.sp)
+                        } else {
+                            Text("No recent tune found", color = Color.Gray, fontSize = 11.sp)
+                        }
+                    }
+                }
+
+                // Column 2: Next Modified
+                Card(
+                    modifier = Modifier.weight(1f),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF14171D)),
+                    border = BorderStroke(1.dp, BorderGrey)
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Box(modifier = Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(AmberGold))
+                            Text("NEXT MODIFIED TUNE", color = AmberGold, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                        }
+                        if (nextModified != null) {
+                            Text(nextModified.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                            Text("OS: ${nextModified.operatingSystem}", color = Color.LightGray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                            Text("Idle: ${nextModified.targetIdleRpm} RPM | Rev: ${nextModified.revLimitRpm}", color = Color.Gray, fontSize = 9.sp)
+                        } else {
+                            Text("No second tune found", color = Color.Gray, fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+
+            // Comparison list
+            AnimatedVisibility(visible = isExpanded && mostRecent != null && nextModified != null) {
+                if (mostRecent != null && nextModified != null) {
+                    Column(
+                        modifier = Modifier
+                            .padding(top = 16.dp)
+                            .fillMaxWidth()
+                            .background(Color(0xFF0F1115))
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "CALIBRATION DIFFERENTIAL REGISTER",
+                            color = Color.LightGray,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+
+                        Divider(color = BorderGrey)
+
+                        // Compare parameters
+                        ParameterDiffRow("VATS Status", if (mostRecent.vatsEnabled) "Enabled" else "Disabled", if (nextModified.vatsEnabled) "Enabled" else "Disabled")
+                        ParameterDiffRow("Flex Fuel Status", if (mostRecent.flexFuelEnabled) "Enabled" else "Disabled", if (nextModified.flexFuelEnabled) "Enabled" else "Disabled")
+                        ParameterDiffRow("MAP Sensor Bar", "${mostRecent.mapSensorBarType}-Bar", "${nextModified.mapSensorBarType}-Bar")
+                        ParameterDiffRow("Lean Cruise", if (mostRecent.leanCruiseEnabled) "Enabled" else "Disabled", if (nextModified.leanCruiseEnabled) "Enabled" else "Disabled")
+                        ParameterDiffRow("Max Spark Advance", "${mostRecent.sparkMaxAdvance}°", "${nextModified.sparkMaxAdvance}°")
+                        ParameterDiffRow("Target Idle RPM", "${mostRecent.targetIdleRpm} RPM", "${nextModified.targetIdleRpm} RPM")
+                        ParameterDiffRow("Injector Flow Rate", "${mostRecent.injectorFlowRateLbHr} lb/hr", "${nextModified.injectorFlowRateLbHr} lb/hr")
+                        ParameterDiffRow("Rev Limit Cut", "${mostRecent.revLimitRpm} RPM", "${nextModified.revLimitRpm} RPM")
+                        ParameterDiffRow("Fan 1 Trigger Temp", "${mostRecent.fan1OnTempF}°F", "${nextModified.fan1OnTempF}°F")
+                        ParameterDiffRow("Fan 2 Trigger Temp", "${mostRecent.fan2OnTempF}°F", "${nextModified.fan2OnTempF}°F")
+                        ParameterDiffRow("VE Table Scaling", "${mostRecent.veMultiplierPercent}%", "${nextModified.veMultiplierPercent}%")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ParameterDiffRow(
+    label: String,
+    valRecent: String,
+    valNext: String
+) {
+    val isDifferent = valRecent != valNext
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = Color.Gray, fontSize = 11.sp, modifier = Modifier.weight(1.2f))
+        
+        Row(
+            modifier = Modifier.weight(2f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = valRecent,
+                color = if (isDifferent) NeonGreen else Color.White,
+                fontSize = 11.sp,
+                fontWeight = if (isDifferent) FontWeight.Bold else FontWeight.Normal,
+                modifier = Modifier.weight(1f),
+                textAlign = TextAlign.End
+            )
+            Icon(Icons.Default.ArrowForward, contentDescription = null, tint = Color.DarkGray, modifier = Modifier.size(10.dp))
+            Text(
+                text = valNext,
+                color = if (isDifferent) AmberGold else Color.White,
+                fontSize = 11.sp,
+                fontWeight = if (isDifferent) FontWeight.Bold else FontWeight.Normal,
+                modifier = Modifier.weight(1f),
+                textAlign = TextAlign.Start
+            )
+        }
+    }
 }

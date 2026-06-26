@@ -20,7 +20,7 @@ android {
             useSupportLibrary = true
         }
 
-        // Read Gemini API Key from .env file
+        // Read API Keys from .env file
         val envFile = project.rootProject.file(".env")
         var geminiKey = ""
         if (envFile.exists()) {

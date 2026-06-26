@@ -70,6 +70,21 @@ class TunerViewModel(application: Application) : AndroidViewModel(application) {
     val calibrations: StateFlow<List<CalFile>> = repository.allCalibrations
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Most Recent and Next Modified Tunes derived from the calibrations list
+    val mostRecentTune: StateFlow<CalFile?> = calibrations
+        .map { list -> list.maxByOrNull { it.lastModified } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val nextModifiedTune: StateFlow<CalFile?> = calibrations
+        .map { list ->
+            if (list.size >= 2) {
+                list.sortedByDescending { it.lastModified }[1]
+            } else {
+                null
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     val logSessions: StateFlow<List<LogSession>> = repository.allSessions
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -214,6 +229,7 @@ class TunerViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+
     }
 
     fun selectTab(index: Int) {
