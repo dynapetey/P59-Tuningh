@@ -22,6 +22,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -43,6 +44,7 @@ import com.example.data.model.CalFile
 import com.example.data.model.LogDataPoint
 import com.example.data.model.LogSession
 import com.example.hardware.ConnectionState
+import com.example.hardware.ObdxProManager
 import com.example.ui.TunerViewModel
 import com.example.ui.LiveTelemetryTableContent
 import com.example.ui.theme.MyApplicationTheme
@@ -111,7 +113,8 @@ fun TunerDashboardScreen(
             voltage = voltage,
             speedMode = speedMode,
             onConnect = { viewModel.obdxManager.connectDevice() },
-            onDisconnect = { viewModel.obdxManager.disconnectDevice() }
+            onDisconnect = { viewModel.obdxManager.disconnectDevice() },
+            onOpenSettings = { viewModel.selectTab(4) }
         )
 
         // --- Custom Design Tab Selector (Flasher / Logger / Patcher) ---
@@ -133,6 +136,7 @@ fun TunerDashboardScreen(
                 1 -> LoggerTabContent(viewModel)
                 2 -> PatcherTabContent(viewModel)
                 3 -> com.example.ui.GeminiTunerTabContent(viewModel)
+                4 -> ObdxConnectionTabContent(viewModel)
             }
         }
     }
@@ -149,17 +153,18 @@ fun TuningTabRow(
     onTabSelected: (Int) -> Unit
 ) {
     val items = listOf(
-        TuningTabItem(0, "PCM FLASHER", Icons.Default.PlayArrow),
-        TuningTabItem(1, "PCM LOGGER", Icons.Default.List),
-        TuningTabItem(2, "UNIVERSAL PATCHER", Icons.Default.Create),
-        TuningTabItem(3, "GEMINI TUNER", Icons.Default.Star)
+        TuningTabItem(0, "FLASHER", Icons.Default.PlayArrow),
+        TuningTabItem(1, "LOGGER", Icons.Default.List),
+        TuningTabItem(2, "PATCHER", Icons.Default.Create),
+        TuningTabItem(3, "AI TUNER", Icons.Default.Star),
+        TuningTabItem(4, "CONNECT", Icons.Default.Settings)
     )
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF14171D))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         items.forEach { tabItem ->
@@ -170,16 +175,16 @@ fun TuningTabRow(
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 4.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .padding(horizontal = 2.dp)
+                    .clip(RoundedCornerShape(6.dp))
                     .background(if (isSelected) CardSurfaceColor else Color.Transparent)
                     .border(
                         1.dp,
                         if (isSelected) BorderGrey else Color.Transparent,
-                        RoundedCornerShape(8.dp)
+                        RoundedCornerShape(6.dp)
                     )
                     .clickable { onTabSelected(idx) }
-                    .padding(vertical = 10.dp, horizontal = 4.dp)
+                    .padding(vertical = 8.dp, horizontal = 2.dp)
                     .testTag("tab_button_$idx"),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
@@ -188,15 +193,15 @@ fun TuningTabRow(
                     imageVector = icon,
                     contentDescription = title,
                     tint = if (isSelected) glowingColorForTab(idx) else Color.Gray,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(14.dp)
                 )
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = title,
                     color = if (isSelected) Color.White else Color.Gray,
-                    fontSize = 11.sp,
+                    fontSize = 9.sp,
                     fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp,
+                    letterSpacing = 0.5.sp,
                     maxLines = 1
                 )
             }
@@ -210,6 +215,7 @@ fun glowingColorForTab(idx: Int): Color {
         1 -> NeonGreen
         2 -> AmberGold
         3 -> TerminalPurple
+        4 -> GlowingBlue
         else -> Color.White
     }
 }
@@ -220,7 +226,8 @@ fun OBDXStatusHeader(
     voltage: Float,
     speedMode: String,
     onConnect: () -> Unit,
-    onDisconnect: () -> Unit
+    onDisconnect: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -281,6 +288,24 @@ fun OBDXStatusHeader(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // Settings gear button
+                IconButton(
+                    onClick = onOpenSettings,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF14171D))
+                        .border(1.dp, BorderGrey, RoundedCornerShape(6.dp))
+                        .testTag("connection_settings_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Connection Settings",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
                 if (obdxState == ConnectionState.DISCONNECTED) {
                     // Bluetooth Status Indicator
                     Text(
@@ -1285,7 +1310,7 @@ fun LoggerTabContent(viewModel: TunerViewModel) {
                 contentPadding = PaddingValues(horizontal = 2.dp)
             ) {
                 Text(
-                    "D3.JS ANALYZER",
+                    "RECHARTS PLOT",
                     color = if (activeSubTab == 2) Color.White else Color.Gray,
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Bold
@@ -1700,7 +1725,7 @@ fun LoggerTabContent(viewModel: TunerViewModel) {
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = if (activeSessionId != null) "D3.JS ANALYZER - ACTIVE STREAM" else "D3.JS STREAM IDLE",
+                                text = if (activeSessionId != null) "RECHARTS ANALYZER - ACTIVE STREAM" else "RECHARTS STREAM IDLE",
                                 color = Color.White,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
@@ -3658,6 +3683,537 @@ fun ParameterDiffRow(
                 modifier = Modifier.weight(1f),
                 textAlign = TextAlign.Start
             )
+        }
+    }
+}
+
+@Composable
+fun <T> CustomDropdownSelector(
+    label: String,
+    selectedValue: T,
+    options: List<T>,
+    onValueSelected: (T) -> Unit,
+    modifier: Modifier = Modifier,
+    displayFormatter: (T) -> String = { it.toString() }
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(modifier = modifier) {
+        Text(text = label, color = Color.Gray, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(4.dp))
+        Box {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFF14171D))
+                    .border(1.dp, BorderGrey, RoundedCornerShape(6.dp))
+                    .clickable { expanded = true }
+                    .padding(vertical = 8.dp, horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = displayFormatter(selectedValue),
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    maxLines = 1
+                )
+                Icon(
+                    imageVector = Icons.Default.ArrowDropDown,
+                    contentDescription = "Expand",
+                    tint = Color.Gray,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier
+                    .background(CardSurfaceColor)
+                    .border(1.dp, BorderGrey, RoundedCornerShape(6.dp))
+            ) {
+                options.forEach { option ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = displayFormatter(option),
+                                color = Color.White,
+                                fontSize = 11.sp
+                            )
+                        },
+                        onClick = {
+                            onValueSelected(option)
+                            expanded = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ObdxConnectionTabContent(viewModel: TunerViewModel) {
+    val obdxManager = viewModel.obdxManager
+    val connectionState by obdxManager.connectionState.collectAsState()
+    val voltage by obdxManager.voltage.collectAsState()
+    val speedMode by obdxManager.vpwSpeedMode.collectAsState()
+    
+    val selectedAddress by obdxManager.selectedDeviceAddress.collectAsState()
+    val baudRate by obdxManager.baudRate.collectAsState()
+    val dataBits by obdxManager.dataBits.collectAsState()
+    val parity by obdxManager.parity.collectAsState()
+    val stopBits by obdxManager.stopBits.collectAsState()
+    val echoEnabled by obdxManager.echoEnabled.collectAsState()
+    val spacesEnabled by obdxManager.spacesEnabled.collectAsState()
+    val headersEnabled by obdxManager.headersEnabled.collectAsState()
+    val allowLongPackets by obdxManager.allowLongPackets.collectAsState()
+    val handshakeTimeoutMs by obdxManager.handshakeTimeoutMs.collectAsState()
+    val usePcmHammerProfile by obdxManager.usePcmHammerProfile.collectAsState()
+
+    var pairedDevices by remember { mutableStateOf(obdxManager.getPairedDevices()) }
+    val recentLogs = remember { mutableStateListOf<String>() }
+
+    LaunchedEffect(Unit) {
+        obdxManager.terminalOutput.collect { log ->
+            recentLogs.add(log)
+            if (recentLogs.size > 50) recentLogs.removeAt(0)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(12.dp)
+    ) {
+        // Scrollable settings fields
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Header Section Card
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardSurfaceColor),
+                border = BorderStroke(1.dp, BorderGrey),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(GlowingBlue.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Connection Settings",
+                            tint = GlowingBlue,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "OBDX PRO SERIAL CONNECTION MANAGER",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.5.sp
+                        )
+                        Text(
+                            text = "Configure high-performance SAE J1850 VPW protocol interface settings",
+                            color = Color.Gray,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+            }
+
+            // 1. Connection Profile (PCM Hammer Profile vs Custom)
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardSurfaceColor),
+                border = BorderStroke(1.dp, BorderGrey)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "PCM Hammer Connection Profile",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Enforces standard ELM handshake sequence (ATE0, ATS0, ATH1, ATAL)",
+                            color = Color.Gray,
+                            fontSize = 9.sp
+                        )
+                    }
+                    Switch(
+                        checked = usePcmHammerProfile,
+                        onCheckedChange = { obdxManager.setUsePcmHammerProfile(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = NeonGreen,
+                            checkedTrackColor = Color(0xFF123C24)
+                        )
+                    )
+                }
+            }
+
+            // 2. Select OBDX Pro Device (Paired list)
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardSurfaceColor),
+                border = BorderStroke(1.dp, BorderGrey),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "SELECT DEVICE",
+                            color = Color.Gray,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "REFRESH",
+                            color = GlowingBlue,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .clickable { pairedDevices = obdxManager.getPairedDevices() }
+                                .padding(4.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    
+                    val selectedDevice = pairedDevices.find { it.address == selectedAddress }
+                    var devDropdownExpanded by remember { mutableStateOf(false) }
+                    
+                    Box {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(0xFF14171D))
+                                .border(1.dp, BorderGrey, RoundedCornerShape(6.dp))
+                                .clickable { devDropdownExpanded = true }
+                                .padding(vertical = 10.dp, horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = selectedDevice?.let { "${it.name} (${it.address})" } ?: "Auto-detect / First compatible OBDX adapter",
+                                color = if (selectedDevice != null) Color.White else GlowingBlue,
+                                fontSize = 12.sp,
+                                maxLines = 1
+                            )
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = "Expand",
+                                tint = Color.Gray,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = devDropdownExpanded,
+                            onDismissRequest = { devDropdownExpanded = false },
+                            modifier = Modifier
+                                .background(CardSurfaceColor)
+                                .border(1.dp, BorderGrey, RoundedCornerShape(6.dp))
+                                .fillMaxWidth(0.9f)
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Auto-detect / First compatible OBDX adapter", color = GlowingBlue, fontSize = 12.sp) },
+                                onClick = {
+                                    obdxManager.setSelectedDeviceAddress(null)
+                                    devDropdownExpanded = false
+                                }
+                            )
+                            pairedDevices.forEach { dev ->
+                                DropdownMenuItem(
+                                    text = { Text("${dev.name} (${dev.address})", color = Color.White, fontSize = 12.sp) },
+                                    onClick = {
+                                        obdxManager.setSelectedDeviceAddress(dev.address)
+                                        devDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Serial Parameters (Baud, Parity, Stop bits, Data bits)
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardSurfaceColor),
+                border = BorderStroke(1.dp, BorderGrey),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = "SERIAL PORT CONFIGURATION",
+                        color = Color.Gray,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CustomDropdownSelector(
+                            label = "BAUD RATE",
+                            selectedValue = baudRate,
+                            options = listOf(115200, 230400, 460800, 500000, 1000000, 2000000),
+                            onValueSelected = { obdxManager.setBaudRate(it) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        CustomDropdownSelector(
+                            label = "DATA BITS",
+                            selectedValue = dataBits,
+                            options = listOf(8, 7),
+                            onValueSelected = { obdxManager.setDataBits(it) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CustomDropdownSelector(
+                            label = "PARITY",
+                            selectedValue = parity,
+                            options = listOf("None", "Even", "Odd"),
+                            onValueSelected = { obdxManager.setParity(it) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        CustomDropdownSelector(
+                            label = "STOP BITS",
+                            selectedValue = stopBits,
+                            options = listOf(1, 2),
+                            onValueSelected = { obdxManager.setStopBits(it) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            // 4. Manual ELM Protocol Handshake Options (active if custom profile is on)
+            if (!usePcmHammerProfile) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = CardSurfaceColor),
+                    border = BorderStroke(1.dp, BorderGrey),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "ADVANCED PROTOCOL CONFIG (ELM327 RAW)",
+                            color = Color.Gray,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Command Echo (ATE1)", color = Color.White, fontSize = 11.sp)
+                            Switch(
+                                checked = echoEnabled,
+                                onCheckedChange = { obdxManager.setEchoEnabled(it) },
+                                modifier = Modifier.scale(0.85f)
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Print Spaces (ATS1)", color = Color.White, fontSize = 11.sp)
+                            Switch(
+                                checked = spacesEnabled,
+                                onCheckedChange = { obdxManager.setSpacesEnabled(it) },
+                                modifier = Modifier.scale(0.85f)
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Print Headers (ATH1)", color = Color.White, fontSize = 11.sp)
+                            Switch(
+                                checked = headersEnabled,
+                                onCheckedChange = { obdxManager.setHeadersEnabled(it) },
+                                modifier = Modifier.scale(0.85f)
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Allow Long Packets (ATAL)", color = Color.White, fontSize = 11.sp)
+                            Switch(
+                                checked = allowLongPackets,
+                                onCheckedChange = { obdxManager.setAllowLongPackets(it) },
+                                modifier = Modifier.scale(0.85f)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Timeout Configuration
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardSurfaceColor),
+                border = BorderStroke(1.dp, BorderGrey),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("HANDSHAKE TIMEOUT", color = Color.Gray, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("${handshakeTimeoutMs} ms", color = GlowingBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Slider(
+                        value = handshakeTimeoutMs.toFloat(),
+                        onValueChange = { obdxManager.setHandshakeTimeoutMs(it.toInt()) },
+                        valueRange = 500f..3000f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = GlowingBlue,
+                            activeTrackColor = GlowingBlue
+                        )
+                    )
+                }
+            }
+
+            // 5. Connection Status Terminal Preview
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardSurfaceColor),
+                border = BorderStroke(1.dp, BorderGrey),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = "LIVE HANDSHAKE PACKET LOGS",
+                        color = Color.Gray,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color.Black)
+                            .border(1.dp, BorderGrey, RoundedCornerShape(6.dp))
+                            .padding(6.dp)
+                    ) {
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(recentLogs) { logLine ->
+                                Text(
+                                    text = logLine,
+                                    color = if (logLine.contains("RX")) NeonGreen else if (logLine.contains("Error")) WarningRed else Color.LightGray,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Divider(color = BorderGrey, thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
+
+        // Action Buttons Footer
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(
+                                when (connectionState) {
+                                    ConnectionState.DISCONNECTED -> WarningRed
+                                    ConnectionState.CONNECTED_READY, ConnectionState.LOGGING -> NeonGreen
+                                    else -> AmberGold
+                                }
+                            )
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = connectionState.name,
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                if (connectionState != ConnectionState.DISCONNECTED) {
+                    Text(
+                        text = "Voltage: ${String.format("%.1f", voltage)}V | $speedMode",
+                        color = Color.Gray,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (connectionState == ConnectionState.DISCONNECTED) {
+                    Button(
+                        onClick = { obdxManager.connectDevice() },
+                        colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = "Connect", modifier = Modifier.size(14.dp), tint = Color.Black)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("CONNECT", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    Button(
+                        onClick = { obdxManager.disconnectDevice() },
+                        colors = ButtonDefaults.buttonColors(containerColor = WarningRed),
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Disconnect", modifier = Modifier.size(14.dp), tint = Color.White)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("DISCONNECT", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
         }
     }
 }

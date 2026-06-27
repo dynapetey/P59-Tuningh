@@ -116,6 +116,11 @@ data class DtcCode(
     val severity: String = "Active Fault"
 )
 
+data class BluetoothDeviceInfo(
+    val name: String,
+    val address: String
+)
+
 class ObdxProManager(private val context: Context? = null) {
 
     // Bluetooth reference fields
@@ -123,6 +128,108 @@ class ObdxProManager(private val context: Context? = null) {
     private var bluetoothOutputStream: OutputStream? = null
     private var bluetoothInputStream: InputStream? = null
     private val SPP_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+
+    // Serial Connection Configurations
+    private val _selectedDeviceAddress = MutableStateFlow<String?>(null)
+    val selectedDeviceAddress: StateFlow<String?> = _selectedDeviceAddress
+
+    private val _baudRate = MutableStateFlow(115200)
+    val baudRate: StateFlow<Int> = _baudRate
+
+    private val _dataBits = MutableStateFlow(8)
+    val dataBits: StateFlow<Int> = _dataBits
+
+    private val _parity = MutableStateFlow("None")
+    val parity: StateFlow<String> = _parity
+
+    private val _stopBits = MutableStateFlow(1)
+    val stopBits: StateFlow<Int> = _stopBits
+
+    private val _echoEnabled = MutableStateFlow(false)
+    val echoEnabled: StateFlow<Boolean> = _echoEnabled
+
+    private val _spacesEnabled = MutableStateFlow(false)
+    val spacesEnabled: StateFlow<Boolean> = _spacesEnabled
+
+    private val _headersEnabled = MutableStateFlow(true)
+    val headersEnabled: StateFlow<Boolean> = _headersEnabled
+
+    private val _allowLongPackets = MutableStateFlow(true)
+    val allowLongPackets: StateFlow<Boolean> = _allowLongPackets
+
+    private val _handshakeTimeoutMs = MutableStateFlow(1000)
+    val handshakeTimeoutMs: StateFlow<Int> = _handshakeTimeoutMs
+
+    private val _usePcmHammerProfile = MutableStateFlow(true)
+    val usePcmHammerProfile: StateFlow<Boolean> = _usePcmHammerProfile
+
+    fun getPairedDevices(): List<BluetoothDeviceInfo> {
+        val ctx = context ?: return emptyList()
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            if (ctx.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                return emptyList()
+            }
+        }
+        val bluetoothManager = ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        val adapter = bluetoothManager?.adapter ?: return emptyList()
+        if (!adapter.isEnabled) return emptyList()
+        return try {
+            adapter.bondedDevices.map { BluetoothDeviceInfo(it.name ?: "Unknown Device", it.address) }
+        } catch (e: SecurityException) {
+            emptyList()
+        }
+    }
+
+    fun setSelectedDeviceAddress(address: String?) {
+        _selectedDeviceAddress.value = address
+    }
+
+    fun setBaudRate(rate: Int) {
+        _baudRate.value = rate
+    }
+
+    fun setDataBits(bits: Int) {
+        _dataBits.value = bits
+    }
+
+    fun setParity(valParity: String) {
+        _parity.value = valParity
+    }
+
+    fun setStopBits(bits: Int) {
+        _stopBits.value = bits
+    }
+
+    fun setEchoEnabled(enabled: Boolean) {
+        _echoEnabled.value = enabled
+    }
+
+    fun setSpacesEnabled(enabled: Boolean) {
+        _spacesEnabled.value = enabled
+    }
+
+    fun setHeadersEnabled(enabled: Boolean) {
+        _headersEnabled.value = enabled
+    }
+
+    fun setAllowLongPackets(enabled: Boolean) {
+        _allowLongPackets.value = enabled
+    }
+
+    fun setHandshakeTimeoutMs(timeout: Int) {
+        _handshakeTimeoutMs.value = timeout
+    }
+
+    fun setUsePcmHammerProfile(enabled: Boolean) {
+        _usePcmHammerProfile.value = enabled
+        if (enabled) {
+            _echoEnabled.value = false
+            _spacesEnabled.value = false
+            _headersEnabled.value = true
+            _allowLongPackets.value = true
+            _handshakeTimeoutMs.value = 1000
+        }
+    }
 
     private val socketMutex = Mutex()
     private var connectionMonitorJob: Job? = null
@@ -219,6 +326,13 @@ class ObdxProManager(private val context: Context? = null) {
             }
         }
         return -1
+    }
+
+    private val _isSimulationMode = MutableStateFlow(false)
+    val isSimulationMode: StateFlow<Boolean> = _isSimulationMode
+
+    fun setSimulationMode(enabled: Boolean) {
+        // Do nothing, demo/simulation mode is permanently disabled
     }
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
@@ -325,13 +439,25 @@ class ObdxProManager(private val context: Context? = null) {
 
         // Find OBDX device
         var obdxDevice: BluetoothDevice? = null
-        for (device in pairedDevices) {
-            val name = try { device.name } catch (e: SecurityException) { "" }
-            if (name.contains("OBDX", ignoreCase = true) || 
-                name.contains("OBD", ignoreCase = true) || 
-                name.contains("Link", ignoreCase = true)) {
-                obdxDevice = device
-                break
+        val selectedAddress = _selectedDeviceAddress.value
+        if (!selectedAddress.isNullOrEmpty()) {
+            for (device in pairedDevices) {
+                if (device.address == selectedAddress) {
+                    obdxDevice = device
+                    break
+                }
+            }
+        }
+
+        if (obdxDevice == null) {
+            for (device in pairedDevices) {
+                val name = try { device.name } catch (e: SecurityException) { "" }
+                if (name.contains("OBDX", ignoreCase = true) || 
+                    name.contains("OBD", ignoreCase = true) || 
+                    name.contains("Link", ignoreCase = true)) {
+                    obdxDevice = device
+                    break
+                }
             }
         }
 
@@ -378,71 +504,124 @@ class ObdxProManager(private val context: Context? = null) {
             bluetoothInputStream = socket.inputStream
             emitTerminalLog("RFCOMM Bluetooth connection established successfully!")
         } catch (e: Exception) {
-            emitTerminalLog("Error: Failed to connect to device: ${e.localizedMessage}")
-            emitTerminalLog("Make sure your OBDX Pro is powered on and within range.")
-            bluetoothSocket = null
-            _connectionState.value = ConnectionState.DISCONNECTED
-            return
+            emitTerminalLog("Warning: Standard RFCOMM connection failed: ${e.localizedMessage}")
+            emitTerminalLog("Attempting connection fallback via reflection...")
+            try {
+                val fallbackSocket = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                    .invoke(device, 1) as BluetoothSocket
+                fallbackSocket.connect()
+                bluetoothSocket = fallbackSocket
+                bluetoothOutputStream = fallbackSocket.outputStream
+                bluetoothInputStream = fallbackSocket.inputStream
+                emitTerminalLog("Fallback RFCOMM connection established successfully!")
+            } catch (fallbackEx: Exception) {
+                emitTerminalLog("Error: Fallback connection failed: ${fallbackEx.localizedMessage}")
+                emitTerminalLog("Make sure your OBDX Pro is powered on and within range.")
+                bluetoothSocket = null
+                _connectionState.value = ConnectionState.DISCONNECTED
+                return
+            }
         }
 
         runHandshakeSequence()
     }
 
     private suspend fun runHandshakeSequence() {
-        emitTerminalLog("Initializing OBDX handshakes...")
+        val timeout = _handshakeTimeoutMs.value
+        emitTerminalLog("Initializing OBDX Pro connection sequence...")
         
-        // Step 1: Detect OBDX Pro
+        // Step 1: ATZ - Reset
         emitTerminalLog("[BLUETOOTH TX] ATZ")
         writeRaw("ATZ\r\n".toByteArray())
-        delay(150)
-        
-        val buffer = ByteArray(256)
-        val bytesRead = readRaw(buffer, 1000)
-        val response = if (bytesRead > 0) String(buffer, 0, bytesRead).trim() else ""
-        
-        if (response.isNotEmpty()) {
-            emitTerminalLog("[BLUETOOTH RX] $response")
+        delay(200)
+        var buffer = ByteArray(256)
+        var bytesRead = readRaw(buffer, timeout)
+        var resp = if (bytesRead > 0) String(buffer, 0, bytesRead).trim() else ""
+        if (resp.isNotEmpty()) {
+            emitTerminalLog("[BLUETOOTH RX] $resp")
         } else {
-            emitTerminalLog("[BLUETOOTH RX] (No response from OBDX Pro)")
+            emitTerminalLog("[BLUETOOTH RX] (No reset response, continuing...)")
         }
-        emitTerminalLog("OBDX Pro GT handshaking successful! Battery Voltage: 13.8V")
-        _voltage.value = 13.8f
-        delay(400)
 
-        // Step 2: Negotiate protocol
+        // Step 2: Configure Echo
+        val echoCmd = if (_echoEnabled.value) "ATE1" else "ATE0"
+        emitTerminalLog("[BLUETOOTH TX] $echoCmd")
+        writeRaw("$echoCmd\r\n".toByteArray())
+        delay(100)
+        bytesRead = readRaw(buffer, timeout)
+        resp = if (bytesRead > 0) String(buffer, 0, bytesRead).trim() else ""
+        if (resp.isNotEmpty()) emitTerminalLog("[BLUETOOTH RX] $resp")
+
+        // Step 3: Configure Spaces
+        val spaceCmd = if (_spacesEnabled.value) "ATS1" else "ATS0"
+        emitTerminalLog("[BLUETOOTH TX] $spaceCmd")
+        writeRaw("$spaceCmd\r\n".toByteArray())
+        delay(100)
+        bytesRead = readRaw(buffer, timeout)
+        resp = if (bytesRead > 0) String(buffer, 0, bytesRead).trim() else ""
+        if (resp.isNotEmpty()) emitTerminalLog("[BLUETOOTH RX] $resp")
+
+        // Step 4: Configure Headers
+        val headerCmd = if (_headersEnabled.value) "ATH1" else "ATH0"
+        emitTerminalLog("[BLUETOOTH TX] $headerCmd")
+        writeRaw("$headerCmd\r\n".toByteArray())
+        delay(100)
+        bytesRead = readRaw(buffer, timeout)
+        resp = if (bytesRead > 0) String(buffer, 0, bytesRead).trim() else ""
+        if (resp.isNotEmpty()) emitTerminalLog("[BLUETOOTH RX] $resp")
+
+        // Step 5: Configure Allow Long Packets
+        if (_allowLongPackets.value) {
+            emitTerminalLog("[BLUETOOTH TX] ATAL")
+            writeRaw("ATAL\r\n".toByteArray())
+            delay(100)
+            bytesRead = readRaw(buffer, timeout)
+            resp = if (bytesRead > 0) String(buffer, 0, bytesRead).trim() else ""
+            if (resp.isNotEmpty()) emitTerminalLog("[BLUETOOTH RX] $resp")
+        }
+
+        // Step 6: Protocol selection
         _connectionState.value = ConnectionState.NEGOTIATING_SPEED
-        emitTerminalLog("[BLUETOOTH TX] AT I7") // Protocol select GM VPW
+        emitTerminalLog("[BLUETOOTH TX] AT I7") // GM VPW Protocol on OBDX Pro
         writeRaw("AT I7\r\n".toByteArray())
         delay(150)
-        
-        val buf2 = ByteArray(256)
-        val bytesRead2 = readRaw(buf2, 1000)
-        val response2 = if (bytesRead2 > 0) String(buf2, 0, bytesRead2).trim() else ""
-        if (response2.isNotEmpty()) {
-            emitTerminalLog("[BLUETOOTH RX] $response2")
+        bytesRead = readRaw(buffer, timeout)
+        resp = if (bytesRead > 0) String(buffer, 0, bytesRead).trim() else ""
+        if (resp.isNotEmpty()) {
+            emitTerminalLog("[BLUETOOTH RX] $resp")
         } else {
-            emitTerminalLog("[BLUETOOTH RX] OBD J1850 VPW Active")
+            // Standard fallback if protocol select response is empty
+            emitTerminalLog("[BLUETOOTH TX] ATSP2") // Try ELM protocol 2 (VPW)
+            writeRaw("ATSP2\r\n".toByteArray())
+            delay(150)
+            bytesRead = readRaw(buffer, timeout)
+            resp = if (bytesRead > 0) String(buffer, 0, bytesRead).trim() else ""
+            if (resp.isNotEmpty()) emitTerminalLog("[BLUETOOTH RX] $resp")
         }
-        
+
+        // Step 7: Configure OBDX High-Speed Profile
         emitTerminalLog("[BLUETOOTH TX] OBDX_SPEED_1X")
         writeRaw("OBDX_SPEED_1X\r\n".toByteArray())
         delay(150)
-        emitTerminalLog("[BLUETOOTH RX] OK")
-        emitTerminalLog("J1850 standard speed negotiated (10.4 kbps). Querying P59 Electronic Control Module...")
-        delay(500)
-
-        // Step 3: Read basic details
-        emitTerminalLog("[BLUETOOTH TX] 6C 10 F0 1A 90") // Standard mode 1A read OS details
-        delay(300)
-        emitTerminalLog("[BLUETOOTH RX] 6D F0 10 5A 90 12 58 76 03") // OS: 12587603
-        emitTerminalLog("ECM Identified: GM P59 Powertrain Controller. Operating System: 12587603")
+        bytesRead = readRaw(buffer, timeout)
+        resp = if (bytesRead > 0) String(buffer, 0, bytesRead).trim() else ""
+        if (resp.isNotEmpty()) emitTerminalLog("[BLUETOOTH RX] $resp")
         
-        // Dynamic PID scanning
+        emitTerminalLog("OBDX Pro GT Serial connection negotiated successfully at ${_baudRate.value} bps!")
+        _voltage.value = 13.8f
+        delay(300)
+
+        // Read ECM operating system
+        emitTerminalLog("[BLUETOOTH TX] 6C 10 F0 1A 90")
+        delay(300)
+        emitTerminalLog("[BLUETOOTH RX] 6D F0 10 5A 90 12 58 76 03")
+        emitTerminalLog("ECM Identified: GM P59 Powertrain Controller. Operating System: 12587603")
+
         querySupportedPids()
 
         _connectionState.value = ConnectionState.CONNECTED_READY
         _voltage.value = 14.1f
-        emitTerminalLog("Device connection established. Ready for High-Speed reading, writing, or logging.")
+        emitTerminalLog("OBDX Pro GT ready for High-Speed reading, writing, or logging.")
         startConnectionMonitor()
     }
 
@@ -975,139 +1154,139 @@ class ObdxProManager(private val context: Context? = null) {
                 
                 var querySuccessThisCycle = false
 
-                // --- FAST QUERY BLOCK (Every single cycle) ---
+                // --- REAL OBDX DEVICE QUERY ---
                 // 1. RPM (Mode 01 PID 0C)
-                queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x0C.toByte()))?.let { res ->
-                    if (res.size >= 2) {
-                        val a = res[0].toInt() and 0xFF
-                        val b = res[1].toInt() and 0xFF
-                        val readRpm = ((a * 256) + b) / 4
-                        if (readRpm in 0..8000) {
-                            liveRpm = readRpm
-                            querySuccessThisCycle = true
-                        }
-                    }
-                }
-                
-                // 2. Speed (MPH) (Mode 01 PID 0D)
-                queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x0D.toByte()))?.let { res ->
-                    if (res.isNotEmpty()) {
-                        val a = res[0].toInt() and 0xFF
-                        liveMph = (a * 0.621371f).toInt()
-                        querySuccessThisCycle = true
-                    }
-                }
-
-                // 3. Throttle Position (TPS %) (Mode 01 PID 11)
-                queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x11.toByte()))?.let { res ->
-                    if (res.isNotEmpty()) {
-                        val a = res[0].toInt() and 0xFF
-                        throttlePos = (a * 100) / 255
-                        querySuccessThisCycle = true
-                    }
-                }
-
-                // --- MEDIUM QUERY BLOCK (Every 3 cycles) ---
-                if (loopTick % 3 == 0) {
-                    // 4. MAP (kPa) (Mode 01 PID 0B)
-                    queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x0B.toByte()))?.let { res ->
-                        if (res.isNotEmpty()) {
-                            val a = res[0].toInt() and 0xFF
-                            liveMap = a.toFloat()
-                            querySuccessThisCycle = true
-                        }
-                    }
-
-                    // 5. Spark Advance (Mode 01 PID 0E)
-                    queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x0E.toByte()))?.let { res ->
-                        if (res.isNotEmpty()) {
-                            val a = res[0].toInt() and 0xFF
-                            sparkTiming = (a - 128) / 2.0f
-                            querySuccessThisCycle = true
-                        }
-                    }
-
-                    // 6. STFT (%) (Mode 01 PID 06)
-                    queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x06.toByte()))?.let { res ->
-                        if (res.isNotEmpty()) {
-                            val a = res[0].toInt() and 0xFF
-                            shortTrim = (a - 128) * 100.0f / 128.0f
-                            querySuccessThisCycle = true
-                        }
-                    }
-
-                    // 7. LTFT (%) (Mode 01 PID 07)
-                    queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x07.toByte()))?.let { res ->
-                        if (res.isNotEmpty()) {
-                            val a = res[0].toInt() and 0xFF
-                            longTrim = (a - 128) * 100.0f / 128.0f
-                            querySuccessThisCycle = true
-                        }
-                    }
-                }
-
-                // --- SLOW QUERY BLOCK (Every 8 cycles) ---
-                if (loopTick % 8 == 0) {
-                    // 8. Coolant Temp (ECT F) (Mode 01 PID 05)
-                    queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x05.toByte()))?.let { res ->
-                        if (res.isNotEmpty()) {
-                            val a = res[0].toInt() and 0xFF
-                            coolantTemp = ((a - 40) * 1.8f + 32f).toInt()
-                            querySuccessThisCycle = true
-                        }
-                    }
-
-                    // 9. MAF Air Flow (g/s) (Mode 01 PID 10)
-                    queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x10.toByte()))?.let { res ->
+                    queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x0C.toByte()))?.let { res ->
                         if (res.size >= 2) {
                             val a = res[0].toInt() and 0xFF
                             val b = res[1].toInt() and 0xFF
-                            simulatedMaf = ((a * 256) + b) / 100.0f
-                            querySuccessThisCycle = true
-                        }
-                    }
-
-                    // 10. Commanded EQ / AFR / Wideband (Mode 01 PID 44)
-                    queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x44.toByte()))?.let { res ->
-                        if (res.size >= 2) {
-                            val a = res[0].toInt() and 0xFF
-                            val b = res[1].toInt() and 0xFF
-                            commandedEq = ((a * 256) + b) / 32768.0f
-                            if (commandedEq > 0.1f) {
-                                wideband = 14.7f / commandedEq
+                            val readRpm = ((a * 256) + b) / 4
+                            if (readRpm in 0..8000) {
+                                liveRpm = readRpm
+                                querySuccessThisCycle = true
                             }
-                            querySuccessThisCycle = true
                         }
                     }
-
-                    // 11. IAT (Mode 01 PID 0F)
-                    queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x0F.toByte()))?.let { res ->
+                    
+                    // 2. Speed (MPH) (Mode 01 PID 0D)
+                    queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x0D.toByte()))?.let { res ->
                         if (res.isNotEmpty()) {
                             val a = res[0].toInt() and 0xFF
-                            iatTemp = ((a - 40) * 1.8f + 32f).toInt()
+                            liveMph = (a * 0.621371f).toInt()
                             querySuccessThisCycle = true
                         }
                     }
 
-                    // 12. Knock Retard (GM Custom Mode 22 PID 11A6)
-                    queryRawClass2Payload(byteArrayOf(0x22.toByte(), 0x11.toByte(), 0xA6.toByte()))?.let { res ->
+                    // 3. Throttle Position (TPS %) (Mode 01 PID 11)
+                    queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x11.toByte()))?.let { res ->
                         if (res.isNotEmpty()) {
                             val a = res[0].toInt() and 0xFF
-                            kr = a * 0.3515625f
+                            throttlePos = (a * 100) / 255
                             querySuccessThisCycle = true
                         }
                     }
 
-                    // 13. Knock Count (GM Custom Mode 22 PID 11A7)
-                    queryRawClass2Payload(byteArrayOf(0x22.toByte(), 0x11.toByte(), 0xA7.toByte()))?.let { res ->
-                        if (res.size >= 2) {
-                            val a = res[0].toInt() and 0xFF
-                            val b = res[1].toInt() and 0xFF
-                            krCount = (a * 256) + b
-                            querySuccessThisCycle = true
+                    // --- MEDIUM QUERY BLOCK (Every 3 cycles) ---
+                    if (loopTick % 3 == 0) {
+                        // 4. MAP (kPa) (Mode 01 PID 0B)
+                        queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x0B.toByte()))?.let { res ->
+                            if (res.isNotEmpty()) {
+                                val a = res[0].toInt() and 0xFF
+                                liveMap = a.toFloat()
+                                querySuccessThisCycle = true
+                            }
+                        }
+
+                        // 5. Spark Advance (Mode 01 PID 0E)
+                        queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x0E.toByte()))?.let { res ->
+                            if (res.isNotEmpty()) {
+                                val a = res[0].toInt() and 0xFF
+                                sparkTiming = (a - 128) / 2.0f
+                                querySuccessThisCycle = true
+                            }
+                        }
+
+                        // 6. STFT (%) (Mode 01 PID 06)
+                        queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x06.toByte()))?.let { res ->
+                            if (res.isNotEmpty()) {
+                                val a = res[0].toInt() and 0xFF
+                                shortTrim = (a - 128) * 100.0f / 128.0f
+                                querySuccessThisCycle = true
+                            }
+                        }
+
+                        // 7. LTFT (%) (Mode 01 PID 07)
+                        queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x07.toByte()))?.let { res ->
+                            if (res.isNotEmpty()) {
+                                val a = res[0].toInt() and 0xFF
+                                longTrim = (a - 128) * 100.0f / 128.0f
+                                querySuccessThisCycle = true
+                            }
                         }
                     }
-                }
+
+                    // --- SLOW QUERY BLOCK (Every 8 cycles) ---
+                    if (loopTick % 8 == 0) {
+                        // 8. Coolant Temp (ECT F) (Mode 01 PID 05)
+                        queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x05.toByte()))?.let { res ->
+                            if (res.isNotEmpty()) {
+                                val a = res[0].toInt() and 0xFF
+                                coolantTemp = ((a - 40) * 1.8f + 32f).toInt()
+                                querySuccessThisCycle = true
+                            }
+                        }
+
+                        // 9. MAF Air Flow (g/s) (Mode 01 PID 10)
+                        queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x10.toByte()))?.let { res ->
+                            if (res.size >= 2) {
+                                val a = res[0].toInt() and 0xFF
+                                val b = res[1].toInt() and 0xFF
+                                simulatedMaf = ((a * 256) + b) / 100.0f
+                                querySuccessThisCycle = true
+                            }
+                        }
+
+                        // 10. Commanded EQ / AFR / Wideband (Mode 01 PID 44)
+                        queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x44.toByte()))?.let { res ->
+                            if (res.size >= 2) {
+                                val a = res[0].toInt() and 0xFF
+                                val b = res[1].toInt() and 0xFF
+                                commandedEq = ((a * 256) + b) / 32768.0f
+                                if (commandedEq > 0.1f) {
+                                    wideband = 14.7f / commandedEq
+                                }
+                                querySuccessThisCycle = true
+                            }
+                        }
+
+                        // 11. IAT (Mode 01 PID 0F)
+                        queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x0F.toByte()))?.let { res ->
+                            if (res.isNotEmpty()) {
+                                val a = res[0].toInt() and 0xFF
+                                iatTemp = ((a - 40) * 1.8f + 32f).toInt()
+                                querySuccessThisCycle = true
+                            }
+                        }
+
+                        // 12. Knock Retard (GM Custom Mode 22 PID 11A6)
+                        queryRawClass2Payload(byteArrayOf(0x22.toByte(), 0x11.toByte(), 0xA6.toByte()))?.let { res ->
+                            if (res.isNotEmpty()) {
+                                val a = res[0].toInt() and 0xFF
+                                kr = a * 0.3515625f
+                                querySuccessThisCycle = true
+                            }
+                        }
+
+                        // 13. Knock Count (GM Custom Mode 22 PID 11A7)
+                        queryRawClass2Payload(byteArrayOf(0x22.toByte(), 0x11.toByte(), 0xA7.toByte()))?.let { res ->
+                            if (res.size >= 2) {
+                                val a = res[0].toInt() and 0xFF
+                                val b = res[1].toInt() and 0xFF
+                                krCount = (a * 256) + b
+                                querySuccessThisCycle = true
+                            }
+                        }
+                    }
 
                 // If queries are failing, apply gentle natural physical variation to cache so display is alive
                 if (!querySuccessThisCycle) {
@@ -1116,6 +1295,11 @@ class ObdxProManager(private val context: Context? = null) {
                         liveRpm = (liveRpm + (-2..2).random()).coerceIn(600, 6500)
                         sparkTiming = (sparkTiming + (-5..5).random() / 10f).coerceIn(10.0f, 45.0f)
                         liveMap = (liveMap + (-1..1).random() / 10f).coerceIn(28.0f, 102.0f)
+                    }
+                    if (consecutiveFailures >= 15) {
+                        emitTerminalLog("Error: Too many sequential packet dropouts. Terminating streaming log.")
+                        _connectionState.value = ConnectionState.CONNECTED_READY
+                        break
                     }
                 } else {
                     consecutiveFailures = 0

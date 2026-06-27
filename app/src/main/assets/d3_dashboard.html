@@ -3,9 +3,38 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>OBDX Pro D3 Telemetry</title>
-    <!-- Load D3.js via CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <title>P59 Recharts Telemetry Dashboard</title>
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        darkBg: '#0B0E14',
+                        cardBg: '#14171D',
+                        borderGrey: '#2C313C',
+                        neonGreen: '#00FF87',
+                        glowingBlue: '#00D1FF',
+                        glowingPurple: '#9E00FF',
+                        warningRed: '#FF4E60',
+                        amberGold: '#FF9F1C'
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- React, ReactDOM and Babel Standalone for live JSX -->
+    <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js" crossorigin></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js" crossorigin></script>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.12/babel.min.js" crossorigin></script>
+    
+    <!-- Recharts UMD -->
+    <script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js" crossorigin></script>
+
     <style>
         * {
             box-sizing: border-box;
@@ -14,497 +43,510 @@
         }
         body {
             background-color: #0B0E14;
-            color: #E2E8F0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             margin: 0;
-            padding: 8px;
+            padding: 0;
             overflow-x: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }
-        .dashboard-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #1E293B;
-            padding-bottom: 6px;
-            margin-bottom: 10px;
+        /* Custom scrollbars */
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
         }
-        .dashboard-title {
-            font-size: 11px;
-            font-weight: 800;
-            letter-spacing: 1.5px;
-            color: #38BDF8;
-            text-transform: uppercase;
+        ::-webkit-scrollbar-track {
+            background: #0B0E14;
         }
-        .status-badge {
-            font-size: 9px;
-            font-weight: bold;
-            padding: 2px 6px;
-            border-radius: 4px;
-            background-color: rgba(16, 185, 129, 0.15);
-            color: #10B981;
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            text-shadow: 0 0 5px rgba(16, 185, 129, 0.5);
-        }
-        /* Parameters grid */
-        .grid-container {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 8px;
-            margin-bottom: 10px;
-        }
-        .param-card {
-            background: #141A24;
-            border: 1px solid #232D3F;
-            border-radius: 6px;
-            padding: 8px;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            position: relative;
-            overflow: hidden;
-        }
-        .param-card.alert {
-            border-color: #EF4444;
-            box-shadow: 0 0 8px rgba(239, 68, 68, 0.15);
-        }
-        .param-label {
-            font-size: 9px;
-            font-weight: 700;
-            color: #94A3B8;
-            letter-spacing: 0.5px;
-            text-transform: uppercase;
-        }
-        .param-value-container {
-            display: flex;
-            align-items: baseline;
-            margin-top: 4px;
-        }
-        .param-value {
-            font-size: 18px;
-            font-weight: 800;
-            color: #FFFFFF;
-            font-family: monospace;
-        }
-        .param-unit {
-            font-size: 8px;
-            color: #64748B;
-            margin-left: 4px;
-            font-weight: bold;
-        }
-        .param-sub {
-            font-size: 8.5px;
-            color: #64748B;
-            margin-top: 2px;
-            display: flex;
-            justify-content: space-between;
-        }
-        .param-sub span {
-            color: #38BDF8;
-            font-family: monospace;
-            font-weight: bold;
-        }
-        /* D3 Chart container */
-        .chart-container {
-            background: #141A24;
-            border: 1px solid #232D3F;
-            border-radius: 6px;
-            padding: 8px;
-            margin-bottom: 6px;
-            position: relative;
-        }
-        .chart-title {
-            font-size: 9px;
-            font-weight: 800;
-            color: #94A3B8;
-            letter-spacing: 0.8px;
-            margin-bottom: 4px;
-            text-transform: uppercase;
-        }
-        #d3-timeline-chart {
-            width: 100%;
-            height: 140px;
-        }
-        /* Neon Colors & Glows */
-        .glow-blue { text-shadow: 0 0 8px rgba(56, 189, 248, 0.6); color: #38BDF8; }
-        .glow-green { text-shadow: 0 0 8px rgba(16, 185, 129, 0.6); color: #10B981; }
-        .glow-gold { text-shadow: 0 0 8px rgba(245, 158, 11, 0.6); color: #F59E0B; }
-        .glow-red { text-shadow: 0 0 8px rgba(239, 68, 68, 0.8); color: #EF4444; }
-        .glow-purple { text-shadow: 0 0 8px rgba(168, 85, 247, 0.6); color: #A855F7; }
-        
-        .axis text {
-            font-size: 7.5px;
-            fill: #64748B;
-            font-family: monospace;
-        }
-        .axis path, .axis line {
-            stroke: #222B3C;
-        }
-        .legend-container {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 4px;
-            justify-content: center;
-        }
-        .legend-item {
-            display: flex;
-            align-items: center;
-            font-size: 8px;
-            font-weight: bold;
-            color: #94A3B8;
-        }
-        .legend-color {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            margin-right: 4px;
+        ::-webkit-scrollbar-thumb {
+            background: #2C313C;
+            border-radius: 2px;
         }
     </style>
 </head>
 <body>
 
-    <div class="dashboard-header">
-        <span class="dashboard-title">D3.js ENGINE ANALYZER</span>
-        <span class="status-badge" id="vpw-status">VPW ACTIVE</span>
-    </div>
+    <div id="root"></div>
 
-    <!-- Parameter Displays (Airflow, Idle, Spark, Knock, Fueling) -->
-    <div class="grid-container">
-        
-        <!-- 1. AIRFLOW TUNING CARD -->
-        <div class="param-card">
-            <span class="param-label">1. Airflow (MAF)</span>
-            <div class="param-value-container">
-                <span class="param-value glow-blue" id="val-maf">12.5</span>
-                <span class="param-unit">g/s</span>
-            </div>
-            <div class="param-sub">
-                MAT Temp: <span id="val-mat">95°F</span>
-            </div>
-        </div>
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+        const {
+            LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
+        } = Recharts;
 
-        <!-- 2. IDLE TUNING CARD -->
-        <div class="param-card">
-            <span class="param-label">2. Idle Speed</span>
-            <div class="param-value-container">
-                <span class="param-value glow-green" id="val-rpm">650</span>
-                <span class="param-unit">RPM</span>
-            </div>
-            <div class="param-sub">
-                Target / IAC: <span id="val-idle-iac">650 / 45</span>
-            </div>
-        </div>
-
-        <!-- 3. SPARK TUNING CARD -->
-        <div class="param-card">
-            <span class="param-label">3. Spark Advance</span>
-            <div class="param-value-container">
-                <span class="param-value glow-purple" id="val-spark">14.5</span>
-                <span class="param-unit">°</span>
-            </div>
-            <div class="param-sub">
-                Dwell Time: <span id="val-dwell">3.2 ms</span>
-            </div>
-        </div>
-
-        <!-- 4. KNOCK TUNING CARD -->
-        <div id="card-knock" class="param-card">
-            <span class="param-label">4. Knock Retard</span>
-            <div class="param-value-container">
-                <span class="param-value" id="val-kr" style="color: #94A3B8;">0.0</span>
-                <span class="param-unit">° KR</span>
-            </div>
-            <div class="param-sub">
-                Detonations: <span id="val-knock-count">0</span>
-            </div>
-        </div>
-
-        <!-- 5. FUELING TUNING CARD -->
-        <div class="param-card" style="grid-column: span 2;">
-            <span class="param-label">5. Fueling Trims & equivalence</span>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
-                <div class="param-value-container">
-                    <span class="param-value glow-gold" id="val-afr">14.70</span>
-                    <span class="param-unit">AFR</span>
-                </div>
-                <div style="display: flex; gap: 10px; font-size: 9px; font-family: monospace;">
-                    <div>STFT: <span id="val-stft" style="color:#10B981; font-weight:bold;">0.0%</span></div>
-                    <div>LTFT: <span id="val-ltft" style="color:#F59E0B; font-weight:bold;">0.0%</span></div>
-                    <div>CMD: <span id="val-cmd-lambda" style="color:#38BDF8; font-weight:bold;">1.00λ</span></div>
-                </div>
-            </div>
-        </div>
-
-    </div>
-
-    <!-- Timeline Chart -->
-    <div class="chart-container">
-        <div class="chart-title">D3 Real-time Scroll Graph (60 Frames)</div>
-        <svg id="d3-timeline-chart"></svg>
-        <div class="legend-container">
-            <div class="legend-item"><span class="legend-color" style="background: #38BDF8;"></span>MAF</div>
-            <div class="legend-item"><span class="legend-color" style="background: #10B981;"></span>RPM</div>
-            <div class="legend-item"><span class="legend-color" style="background: #A855F7;"></span>SPARK</div>
-            <div class="legend-item"><span class="legend-color" style="background: #EF4444;"></span>KR</div>
-            <div class="legend-item"><span class="legend-color" style="background: #F59E0B;"></span>AFR</div>
-        </div>
-    </div>
-
-    <script>
-        // Store historical data
-        const maxDataPoints = 60;
-        const dataHistory = [];
-        
-        // Setup initial empty history
-        for (let i = 0; i < maxDataPoints; i++) {
-            dataHistory.push({
-                index: i,
+        function App() {
+            const [dataHistory, setDataHistory] = useState([]);
+            const [currentData, setCurrentData] = useState({
                 rpm: 0,
-                maf: 0,
-                spark: 0,
-                kr: 0,
-                afr: 14.7
+                mph: 0,
+                mapKpa: 0,
+                coolantTempF: 0,
+                sparkAdvance: 0,
+                shortTermFuelTrimPercent: 0,
+                widebandO2Afr: 14.7,
+                throttlePositionPercent: 0,
+                massAirFlowGps: 0,
+                knockRetardDegrees: 0,
+                knockCount: 0,
+                manifoldAirTempF: 0,
+                desiredIdleRpm: 0,
+                iacPositionSteps: 0,
+                dwellTimeMs: 0
             });
-        }
-
-        let svg, g, xScale, yScale, lineRpm, lineMaf, lineSpark, lineKr, lineAfr;
-        let chartWidth = 0, chartHeight = 0;
-
-        function initD3Chart() {
-            const container = document.getElementById("d3-timeline-chart");
-            const rect = container.getBoundingClientRect();
-            chartWidth = rect.width;
-            chartHeight = rect.height;
-
-            const margin = { top: 10, right: 10, bottom: 20, left: 25 };
-            const innerWidth = chartWidth - margin.left - margin.right;
-            const innerHeight = chartHeight - margin.top - margin.bottom;
-
-            svg = d3.select("#d3-timeline-chart")
-                .html("") // clear
-                .attr("width", chartWidth)
-                .attr("height", chartHeight);
-
-            // Add linear glow filters
-            const defs = svg.append("defs");
-            const filters = ["blue", "green", "purple", "red", "gold"];
-            const colors = ["#38BDF8", "#10B981", "#A855F7", "#EF4444", "#F59E0B"];
             
-            filters.forEach((id, i) => {
-                const filter = defs.append("filter")
-                    .attr("id", `glow-${id}`)
-                    .attr("x", "-20%")
-                    .attr("y", "-20%")
-                    .attr("width", "140%")
-                    .attr("height", "140%");
-                filter.append("feGaussianBlur")
-                    .attr("stdDeviation", "2.5")
-                    .attr("result", "blur");
-                filter.append("feMerge")
-                    .selectAll("feMergeNode")
-                    .data(["blur", "SourceGraphic"])
-                    .enter().append("feMergeNode")
-                    .attr("in", d => d);
+            const [isFrozen, setIsFrozen] = useState(false);
+            const [visibleLines, setVisibleLines] = useState({
+                rpm: true,
+                mapKpa: true,
+                sparkAdvance: true,
+                knockRetardDegrees: true,
+                widebandO2Afr: false
             });
 
-            g = svg.append("g")
-                .attr("transform", `translate(${margin.left},${margin.top})`);
+            const [stats, setStats] = useState({
+                maxRpm: 0,
+                minMap: 100,
+                maxMap: 0,
+                maxSpark: 0,
+                minSpark: 50,
+                maxKr: 0,
+                knockCountTotal: 0
+            });
 
-            // Scales
-            xScale = d3.scaleLinear()
-                .domain([0, maxDataPoints - 1])
-                .range([0, innerWidth]);
+            // Initialize rolling history with clean mock default timeline
+            useEffect(() => {
+                const initial = [];
+                const now = new Date();
+                for (let i = 40; i >= 0; i--) {
+                    const timeStr = new Date(now.getTime() - i * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    initial.push({
+                        time: timeStr,
+                        rpm: 0,
+                        mph: 0,
+                        mapKpa: 30,
+                        coolantTempF: 0,
+                        sparkAdvance: 0,
+                        shortTermFuelTrimPercent: 0,
+                        widebandO2Afr: 14.7,
+                        throttlePositionPercent: 0,
+                        massAirFlowGps: 0,
+                        knockRetardDegrees: 0,
+                        knockCount: 0,
+                        manifoldAirTempF: 0
+                    });
+                }
+                setDataHistory(initial);
+            }, []);
 
-            yScale = d3.scaleLinear()
-                .domain([0, 100]) // Norm scale (%)
-                .range([innerHeight, 0]);
+            // Set up updater hook on window object for the Android native Webview interface bridge
+            useEffect(() => {
+                window.updateReactData = (newPoint) => {
+                    if (isFrozen) return;
+                    
+                    setCurrentData(newPoint);
+                    
+                    setDataHistory(prev => {
+                        const updated = [...prev, newPoint];
+                        if (updated.length > 50) {
+                            updated.shift();
+                        }
+                        return updated;
+                    });
 
-            // X-Axis (invisible grid)
-            g.append("g")
-                .attr("class", "axis x-axis")
-                .attr("transform", `translate(0,${innerHeight})`)
-                .call(d3.axisBottom(xScale).ticks(5).tickFormat(""));
+                    setStats(prev => {
+                        return {
+                            maxRpm: Math.max(prev.maxRpm, newPoint.rpm),
+                            minMap: Math.min(prev.minMap, newPoint.mapKpa),
+                            maxMap: Math.max(prev.maxMap, newPoint.mapKpa),
+                            maxSpark: Math.max(prev.maxSpark, newPoint.sparkAdvance),
+                            minSpark: Math.min(prev.minSpark, newPoint.sparkAdvance),
+                            maxKr: Math.max(prev.maxKr, newPoint.knockRetardDegrees),
+                            knockCountTotal: newPoint.knockCount
+                        };
+                    });
+                };
+            }, [isFrozen]);
 
-            // Y-Axis
-            g.append("g")
-                .attr("class", "axis y-axis")
-                .call(d3.axisLeft(yScale).ticks(4).tickFormat(d => d + "%"));
+            const handleLineToggle = (key) => {
+                setVisibleLines(prev => ({ ...prev, [key]: !prev[key] }));
+            };
 
-            // Grid lines
-            g.append("g")
-                .attr("class", "grid")
-                .call(d3.axisLeft(yScale).ticks(4).tickSize(-innerWidth).tickFormat(""));
+            // Calculate auto-normalized values so all metrics are perfectly scalable on a single 0-100% canvas
+            const normalizedHistory = useMemo(() => {
+                return dataHistory.map(pt => {
+                    return {
+                        ...pt,
+                        rpmNorm: Math.min(100, (pt.rpm / 7000) * 100),
+                        mapNorm: Math.min(100, (pt.mapKpa / 120) * 100),
+                        sparkNorm: Math.min(100, Math.max(0, ((pt.sparkAdvance + 10) / 60) * 100)), // Maps -10..50 to 0..100
+                        krNorm: Math.min(100, (pt.knockRetardDegrees / 10) * 100),
+                        afrNorm: Math.min(100, Math.max(0, ((pt.widebandO2Afr - 10) / 8) * 100)) // Maps 10..18 to 0..100
+                    };
+                });
+            }, [dataHistory]);
 
-            g.selectAll(".grid line")
-                .style("stroke", "#1E293B")
-                .style("stroke-dasharray", "2,2");
-            g.select(".grid path").remove();
+            // Clear statistics
+            const clearStats = () => {
+                setStats({
+                    maxRpm: currentData.rpm,
+                    minMap: currentData.mapKpa,
+                    maxMap: currentData.mapKpa,
+                    maxSpark: currentData.sparkAdvance,
+                    minSpark: currentData.sparkAdvance,
+                    maxKr: currentData.knockRetardDegrees,
+                    knockCountTotal: currentData.knockCount
+                });
+            };
 
-            // Line Generators
-            // Normalize values to fit inside 0-100% yScale
-            lineRpm = d3.line()
-                .x(d => xScale(d.index))
-                .y(d => yScale(Math.min(100, (d.rpm / 7000) * 100)));
+            // Custom Tooltip component matching the dark sleek theme
+            const CustomTooltip = ({ active, payload }) => {
+                if (active && payload && payload.length) {
+                    const rawPoint = payload[0].payload;
+                    return (
+                        <div className="bg-[#14171D] border border-borderGrey p-2.5 rounded-md shadow-2xl text-[10px] font-mono text-slate-300">
+                            <div className="text-slate-400 font-extrabold mb-1 border-b border-borderGrey pb-1">{rawPoint.time}</div>
+                            <div className="space-y-1">
+                                <div className="flex justify-between gap-6">
+                                    <span className="text-neonGreen">RPM:</span>
+                                    <span className="font-extrabold text-white">{rawPoint.rpm} RPM</span>
+                                </div>
+                                <div className="flex justify-between gap-6">
+                                    <span className="text-glowingBlue">MAP:</span>
+                                    <span className="font-extrabold text-white">{rawPoint.mapKpa ? rawPoint.mapKpa.toFixed(1) : '0.0'} kPa</span>
+                                </div>
+                                <div className="flex justify-between gap-6">
+                                    <span className="text-glowingPurple">SPARK:</span>
+                                    <span className="font-extrabold text-white">{rawPoint.sparkAdvance ? rawPoint.sparkAdvance.toFixed(1) : '0.0'}°</span>
+                                </div>
+                                <div className="flex justify-between gap-6">
+                                    <span className="text-warningRed">KNOCK:</span>
+                                    <span className="font-extrabold text-white">{rawPoint.knockRetardDegrees ? rawPoint.knockRetardDegrees.toFixed(1) : '0.0'}° KR</span>
+                                </div>
+                                <div className="flex justify-between gap-6">
+                                    <span className="text-amberGold">AFR:</span>
+                                    <span className="font-extrabold text-white">{rawPoint.widebandO2Afr ? rawPoint.widebandO2Afr.toFixed(2) : '14.7'}</span>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                }
+                return null;
+            };
 
-            lineMaf = d3.line()
-                .x(d => xScale(d.index))
-                .y(d => yScale(Math.min(100, (d.maf / 240) * 100)));
+            return (
+                <div className="flex flex-col min-h-screen text-slate-100 bg-darkBg p-3">
+                    
+                    {/* Header Controls */}
+                    <div className="flex justify-between items-center border-b border-borderGrey pb-2 mb-3">
+                        <div className="flex items-center gap-1.5">
+                            <div className="w-1.5 h-1.5 bg-glowingBlue rounded-full shadow-[0_0_8px_#00D1FF]"></div>
+                            <span className="text-[10px] font-black tracking-widest text-slate-300 uppercase">RECHARTS ENGINE SENSOR RUN</span>
+                        </div>
+                        <div className="flex gap-1.5 items-center">
+                            <button 
+                                onClick={clearStats}
+                                className="text-[9px] font-extrabold px-2 py-1 rounded border border-borderGrey bg-cardBg hover:bg-slate-800 text-slate-400"
+                            >
+                                RESET STATS
+                            </button>
+                            <button 
+                                onClick={() => setIsFrozen(!isFrozen)}
+                                className={`text-[9px] font-extrabold px-2.5 py-1 rounded border transition-all ${
+                                    isFrozen 
+                                    ? 'bg-amberGold/20 border-amberGold text-amberGold' 
+                                    : 'bg-cardBg border-borderGrey text-slate-400 hover:bg-slate-800'
+                                }`}
+                            >
+                                {isFrozen ? "▶ RESUME" : "⏸ FREEZE"}
+                            </button>
+                        </div>
+                    </div>
 
-            lineSpark = d3.line()
-                .x(d => xScale(d.index))
-                .y(d => yScale(Math.min(100, ((d.spark + 10) / 55) * 100))); // range -10 to 45 deg
+                    {/* Sensor Dash Cards */}
+                    <div className="grid grid-cols-2 gap-2 mb-3">
+                        
+                        {/* RPM Gauge */}
+                        <div className="bg-cardBg border border-borderGrey rounded-md p-2 flex flex-col justify-between">
+                            <div className="flex justify-between items-center">
+                                <span className="text-[8.5px] font-bold text-slate-400">ENGINE SPEED</span>
+                                <span className="text-[7.5px] bg-neonGreen/10 text-neonGreen font-mono px-1 rounded">RPM</span>
+                            </div>
+                            <div className="my-1.5 flex items-baseline">
+                                <span className="text-2xl font-black text-neonGreen font-mono tracking-tight">{currentData.rpm}</span>
+                                <span className="text-[9px] text-slate-500 font-bold ml-0.5">RPM</span>
+                            </div>
+                            <div className="text-[8px] text-slate-500 flex justify-between font-mono">
+                                <span>MIN: 0</span>
+                                <span>MAX: <span className="text-neonGreen">{stats.maxRpm}</span></span>
+                            </div>
+                        </div>
 
-            lineKr = d3.line()
-                .x(d => xScale(d.index))
-                .y(d => yScale(Math.min(100, (d.kr / 8) * 100))); // range 0-8 deg KR
+                        {/* MAP Gauge */}
+                        <div className="bg-cardBg border border-borderGrey rounded-md p-2 flex flex-col justify-between">
+                            <div className="flex justify-between items-center">
+                                <span className="text-[8.5px] font-bold text-slate-400">MANIFOLD PRESSURE</span>
+                                <span className="text-[7.5px] bg-glowingBlue/10 text-glowingBlue font-mono px-1 rounded">MAP</span>
+                            </div>
+                            <div className="my-1.5 flex items-baseline">
+                                <span className="text-2xl font-black text-glowingBlue font-mono tracking-tight">
+                                    {currentData.mapKpa ? currentData.mapKpa.toFixed(1) : '0.0'}
+                                </span>
+                                <span className="text-[9px] text-slate-500 font-bold ml-0.5">kPa</span>
+                            </div>
+                            <div className="text-[8px] text-slate-500 flex justify-between font-mono">
+                                <span>MIN: <span className="text-glowingBlue">{stats.minMap === 100 ? '0' : stats.minMap.toFixed(0)}</span></span>
+                                <span>MAX: <span className="text-glowingBlue">{stats.maxMap.toFixed(0)}</span></span>
+                            </div>
+                        </div>
 
-            lineAfr = d3.line()
-                .x(d => xScale(d.index))
-                .y(d => yScale(Math.min(100, ((d.afr - 10) / 8) * 100))); // range 10-18 AFR
+                        {/* Spark Advance Gauge */}
+                        <div className="bg-cardBg border border-borderGrey rounded-md p-2 flex flex-col justify-between">
+                            <div className="flex justify-between items-center">
+                                <span className="text-[8.5px] font-bold text-slate-400">IGNITION ADVANCE</span>
+                                <span className="text-[7.5px] bg-glowingPurple/10 text-glowingPurple font-mono px-1 rounded">SPARK</span>
+                            </div>
+                            <div className="my-1.5 flex items-baseline">
+                                <span className="text-2xl font-black text-glowingPurple font-mono tracking-tight">
+                                    {currentData.sparkAdvance ? currentData.sparkAdvance.toFixed(1) : '0.0'}
+                                </span>
+                                <span className="text-[9px] text-slate-500 font-bold ml-0.5">°</span>
+                            </div>
+                            <div className="text-[8px] text-slate-500 flex justify-between font-mono">
+                                <span>MIN: <span className="text-glowingPurple">{stats.minSpark === 50 ? '0' : stats.minSpark.toFixed(0)}</span></span>
+                                <span>MAX: <span className="text-glowingPurple">{stats.maxSpark.toFixed(0)}</span></span>
+                            </div>
+                        </div>
 
-            // Render Paths
-            g.append("path")
-                .datum(dataHistory)
-                .attr("class", "path-maf")
-                .attr("fill", "none")
-                .attr("stroke", "#38BDF8")
-                .attr("stroke-width", 2)
-                .attr("filter", "url(#glow-blue)");
+                        {/* Knock Retard Gauge with alert flash */}
+                        <div className={`border rounded-md p-2 flex flex-col justify-between transition-all duration-300 ${
+                            currentData.knockRetardDegrees > 0 
+                            ? 'bg-warningRed/10 border-warningRed shadow-[0_0_10px_rgba(255,78,96,0.15)] animate-pulse' 
+                            : 'bg-cardBg border-borderGrey'
+                        }`}>
+                            <div className="flex justify-between items-center">
+                                <span className="text-[8.5px] font-bold text-slate-400">KNOCK RETARD</span>
+                                <span className={`text-[7.5px] font-mono px-1 rounded ${
+                                    currentData.knockRetardDegrees > 0 ? 'bg-warningRed/20 text-warningRed' : 'bg-slate-800 text-slate-500'
+                                }`}>DET</span>
+                            </div>
+                            <div className="my-1.5 flex items-baseline">
+                                <span className={`text-2xl font-black font-mono tracking-tight ${
+                                    currentData.knockRetardDegrees > 0 ? 'text-warningRed' : 'text-slate-400'
+                                }`}>
+                                    {currentData.knockRetardDegrees ? currentData.knockRetardDegrees.toFixed(1) : '0.0'}
+                                </span>
+                                <span className="text-[9px] text-slate-500 font-bold ml-0.5">° KR</span>
+                            </div>
+                            <div className="text-[8px] text-slate-500 flex justify-between font-mono">
+                                <span>DETONATIONS: <span className="text-warningRed font-bold">{currentData.knockCount}</span></span>
+                                <span>MAX: <span className="text-warningRed font-bold">{stats.maxKr.toFixed(1)}</span></span>
+                            </div>
+                        </div>
 
-            g.append("path")
-                .datum(dataHistory)
-                .attr("class", "path-rpm")
-                .attr("fill", "none")
-                .attr("stroke", "#10B981")
-                .attr("stroke-width", 2)
-                .attr("filter", "url(#glow-green)");
+                    </div>
 
-            g.append("path")
-                .datum(dataHistory)
-                .attr("class", "path-spark")
-                .attr("fill", "none")
-                .attr("stroke", "#A855F7")
-                .attr("stroke-width", 1.5)
-                .attr("filter", "url(#glow-purple)");
+                    {/* Recharts Graphical Dashboard Area */}
+                    <div className="bg-cardBg border border-borderGrey rounded-md p-2.5 flex-1 flex flex-col min-h-[190px] mb-3">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-[8.5px] font-extrabold text-slate-400 tracking-wider uppercase">Recharts Time Scale Chrono (50 Seconds)</span>
+                            <span className="text-[7.5px] text-slate-500 font-mono">0-100% SCALE</span>
+                        </div>
+                        
+                        <div className="w-full flex-1 min-h-[140px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={normalizedHistory} margin={{ top: 2, right: 2, left: -28, bottom: 2 }}>
+                                    <CartesianGrid stroke="#1E293B" strokeDasharray="3 3" vertical={false} />
+                                    <XAxis 
+                                        dataKey="time" 
+                                        stroke="#475569" 
+                                        fontSize={7.5} 
+                                        tickLine={false}
+                                        axisLine={false}
+                                    />
+                                    <YAxis 
+                                        stroke="#475569" 
+                                        fontSize={7.5} 
+                                        tickLine={false} 
+                                        axisLine={false}
+                                        domain={[0, 100]}
+                                        tickFormatter={(val) => `${val}%`}
+                                    />
+                                    <Tooltip content={<CustomTooltip />} />
+                                    
+                                    {visibleLines.rpm && (
+                                        <Line 
+                                            type="monotone" 
+                                            dataKey="rpmNorm" 
+                                            name="RPM"
+                                            stroke="#00FF87" 
+                                            strokeWidth={2} 
+                                            dot={false}
+                                            activeDot={{ r: 3 }}
+                                        />
+                                    )}
+                                    {visibleLines.mapKpa && (
+                                        <Line 
+                                            type="monotone" 
+                                            dataKey="mapNorm" 
+                                            name="MAP"
+                                            stroke="#00D1FF" 
+                                            strokeWidth={2} 
+                                            dot={false}
+                                            activeDot={{ r: 3 }}
+                                        />
+                                    )}
+                                    {visibleLines.sparkAdvance && (
+                                        <Line 
+                                            type="monotone" 
+                                            dataKey="sparkNorm" 
+                                            name="Spark"
+                                            stroke="#9E00FF" 
+                                            strokeWidth={2} 
+                                            dot={false}
+                                            activeDot={{ r: 3 }}
+                                        />
+                                    )}
+                                    {visibleLines.knockRetardDegrees && (
+                                        <Line 
+                                            type="monotone" 
+                                            dataKey="krNorm" 
+                                            name="Knock Retard"
+                                            stroke="#FF4E60" 
+                                            strokeWidth={2.5} 
+                                            dot={false}
+                                            activeDot={{ r: 4 }}
+                                        />
+                                    )}
+                                    {visibleLines.widebandO2Afr && (
+                                        <Line 
+                                            type="monotone" 
+                                            dataKey="afrNorm" 
+                                            name="AFR"
+                                            stroke="#FF9F1C" 
+                                            strokeWidth={1.5} 
+                                            dot={false}
+                                            activeDot={{ r: 3 }}
+                                        />
+                                    )}
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </div>
 
-            g.append("path")
-                .datum(dataHistory)
-                .attr("class", "path-kr")
-                .attr("fill", "none")
-                .attr("stroke", "#EF4444")
-                .attr("stroke-width", 2.5)
-                .attr("filter", "url(#glow-red)");
+                        {/* Interactive Series Toggles */}
+                        <div className="flex flex-wrap justify-center gap-1.5 mt-2 pt-2 border-t border-slate-800">
+                            <button 
+                                onClick={() => handleLineToggle('rpm')}
+                                className={`text-[8px] font-bold px-1.5 py-0.5 rounded border transition-all flex items-center gap-1 ${
+                                    visibleLines.rpm 
+                                    ? 'bg-neonGreen/10 border-neonGreen text-neonGreen' 
+                                    : 'bg-slate-800/10 border-borderGrey text-slate-500'
+                                }`}
+                            >
+                                <span className="w-1.5 h-1.5 rounded-full bg-neonGreen"></span>
+                                RPM
+                            </button>
+                            <button 
+                                onClick={() => handleLineToggle('mapKpa')}
+                                className={`text-[8px] font-bold px-1.5 py-0.5 rounded border transition-all flex items-center gap-1 ${
+                                    visibleLines.mapKpa 
+                                    ? 'bg-glowingBlue/10 border-glowingBlue text-glowingBlue' 
+                                    : 'bg-slate-800/10 border-borderGrey text-slate-500'
+                                }`}
+                            >
+                                <span className="w-1.5 h-1.5 rounded-full bg-glowingBlue"></span>
+                                MAP
+                            </button>
+                            <button 
+                                onClick={() => handleLineToggle('sparkAdvance')}
+                                className={`text-[8px] font-bold px-1.5 py-0.5 rounded border transition-all flex items-center gap-1 ${
+                                    visibleLines.sparkAdvance 
+                                    ? 'bg-glowingPurple/10 border-glowingPurple text-glowingPurple' 
+                                    : 'bg-slate-800/10 border-borderGrey text-slate-500'
+                                }`}
+                            >
+                                <span className="w-1.5 h-1.5 rounded-full bg-glowingPurple"></span>
+                                SPARK
+                            </button>
+                            <button 
+                                onClick={() => handleLineToggle('knockRetardDegrees')}
+                                className={`text-[8px] font-bold px-1.5 py-0.5 rounded border transition-all flex items-center gap-1 ${
+                                    visibleLines.knockRetardDegrees 
+                                    ? 'bg-warningRed/10 border-warningRed text-warningRed' 
+                                    : 'bg-slate-800/10 border-borderGrey text-slate-500'
+                                }`}
+                            >
+                                <span className="w-1.5 h-1.5 rounded-full bg-warningRed"></span>
+                                KR
+                            </button>
+                            <button 
+                                onClick={() => handleLineToggle('widebandO2Afr')}
+                                className={`text-[8px] font-bold px-1.5 py-0.5 rounded border transition-all flex items-center gap-1 ${
+                                    visibleLines.widebandO2Afr 
+                                    ? 'bg-amberGold/10 border-amberGold text-amberGold' 
+                                    : 'bg-slate-800/10 border-borderGrey text-slate-500'
+                                }`}
+                            >
+                                <span className="w-1.5 h-1.5 rounded-full bg-amberGold"></span>
+                                WBO2 AFR
+                            </button>
+                        </div>
+                    </div>
 
-            g.append("path")
-                .datum(dataHistory)
-                .attr("class", "path-afr")
-                .attr("fill", "none")
-                .attr("stroke", "#F59E0B")
-                .attr("stroke-width", 1.5)
-                .attr("filter", "url(#glow-gold)");
+                    {/* Secondary Telemetry Table Panel */}
+                    <div className="grid grid-cols-3 gap-2 text-[8px] font-mono">
+                        <div className="bg-cardBg border border-borderGrey rounded-md p-1.5 text-center">
+                            <div className="text-slate-500 font-bold mb-0.5">WBO2 AFR</div>
+                            <div className="text-amberGold font-black text-xs">
+                                {currentData.widebandO2Afr ? currentData.widebandO2Afr.toFixed(2) : '14.70'}
+                            </div>
+                        </div>
+                        <div className="bg-cardBg border border-borderGrey rounded-md p-1.5 text-center">
+                            <div className="text-slate-500 font-bold mb-0.5">THROTTLE</div>
+                            <div className="text-glowingBlue font-black text-xs">
+                                {currentData.throttlePositionPercent}%
+                            </div>
+                        </div>
+                        <div className="bg-cardBg border border-borderGrey rounded-md p-1.5 text-center">
+                            <div className="text-slate-500 font-bold mb-0.5">COOLANT/IAT</div>
+                            <div className="text-slate-200 font-black text-xs">
+                                {currentData.coolantTempF}°F / {currentData.manifoldAirTempF}°F
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            );
         }
 
-        function updateD3Chart() {
-            if (!svg) return;
-            
-            // Re-index history items
-            dataHistory.forEach((d, idx) => { d.index = idx; });
-
-            g.select(".path-maf").datum(dataHistory).attr("d", lineMaf);
-            g.select(".path-rpm").datum(dataHistory).attr("d", lineRpm);
-            g.select(".path-spark").datum(dataHistory).attr("d", lineSpark);
-            g.select(".path-kr").datum(dataHistory).attr("d", lineKr);
-            g.select(".path-afr").datum(dataHistory).attr("d", lineAfr);
-        }
-
-        // Bridge update trigger
-        function updateSensorData(jsonStr) {
+        // Bridge update trigger to listen from Android webViewRef?.evaluateJavascript
+        window.updateSensorData = (jsonStr) => {
             try {
                 const data = JSON.parse(jsonStr);
-                
-                // 1. Airflow
-                const maf = data.massAirFlowGps || 12.5;
-                const mat = data.manifoldAirTempF || 95;
-                document.getElementById("val-maf").innerText = maf.toFixed(1);
-                document.getElementById("val-mat").innerText = mat + "°F";
-
-                // 2. Idle
-                const rpm = data.rpm || 0;
-                const desiredRpm = data.desiredIdleRpm || 650;
-                const iacSteps = data.iacPositionSteps || 45;
-                document.getElementById("val-rpm").innerText = rpm;
-                document.getElementById("val-idle-iac").innerText = desiredRpm + " / " + iacSteps;
-
-                // 3. Spark
-                const spark = data.sparkAdvance || 0.0;
-                const dwell = data.dwellTimeMs || 3.2;
-                document.getElementById("val-spark").innerText = spark.toFixed(1);
-                document.getElementById("val-dwell").innerText = dwell.toFixed(1) + " ms";
-
-                // 4. Knock
-                const kr = data.knockRetardDegrees || 0.0;
-                const kCount = data.knockCount || 0;
-                const krEl = document.getElementById("val-kr");
-                const krCard = document.getElementById("card-knock");
-                
-                krEl.innerText = kr.toFixed(1);
-                document.getElementById("val-knock-count").innerText = kCount;
-                
-                if (kr > 0) {
-                    krEl.className = "param-value glow-red";
-                    krCard.classList.add("alert");
-                } else {
-                    krEl.className = "param-value";
-                    krEl.style.color = "#94A3B8";
-                    krCard.classList.remove("alert");
+                if (window.updateReactData) {
+                    window.updateReactData({
+                        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                        rpm: data.rpm || 0,
+                        mph: data.mph || 0,
+                        mapKpa: data.mapKpa || 0,
+                        coolantTempF: data.coolantTempF || 0,
+                        sparkAdvance: data.sparkAdvance || 0,
+                        shortTermFuelTrimPercent: data.shortTermFuelTrimPercent || 0,
+                        widebandO2Afr: data.widebandO2Afr || 14.7,
+                        throttlePositionPercent: data.throttlePositionPercent || 0,
+                        massAirFlowGps: data.massAirFlowGps || 0,
+                        knockRetardDegrees: data.knockRetardDegrees || 0,
+                        knockCount: data.knockCount || 0,
+                        manifoldAirTempF: data.manifoldAirTempF || 0,
+                        desiredIdleRpm: data.desiredIdleRpm || 0,
+                        iacPositionSteps: data.iacPositionSteps || 0,
+                        dwellTimeMs: data.dwellTimeMs || 0
+                    });
                 }
-
-                // 5. Fueling
-                const afr = data.widebandO2Afr || 14.7;
-                const stft = data.shortTermFuelTrimPercent || 0.0;
-                const ltft = data.longTermFuelTrimPercent || 0.0;
-                const cmd = data.commandedEquivalenceRatio || 1.0;
-
-                document.getElementById("val-afr").innerText = afr.toFixed(2);
-                
-                const stftEl = document.getElementById("val-stft");
-                stftEl.innerText = (stft >= 0 ? "+" : "") + stft.toFixed(1) + "%";
-                stftEl.style.color = stft > 5 ? "#EF4444" : stft < -5 ? "#38BDF8" : "#10B981";
-
-                const ltftEl = document.getElementById("val-ltft");
-                ltftEl.innerText = (ltft >= 0 ? "+" : "") + ltft.toFixed(1) + "%";
-                ltftEl.style.color = ltft > 5 ? "#EF4444" : ltft < -5 ? "#38BDF8" : "#F59E0B";
-
-                document.getElementById("val-cmd-lambda").innerText = cmd.toFixed(2) + "λ";
-
-                // Push to timeline and scroll
-                dataHistory.shift();
-                dataHistory.push({
-                    index: maxDataPoints - 1,
-                    rpm: rpm,
-                    maf: maf,
-                    spark: spark,
-                    kr: kr,
-                    afr: afr
-                });
-
-                updateD3Chart();
-
-            } catch (e) {
-                console.error("Failed to parse live JSON telemetry: ", e);
+            } catch(e) {
+                console.error("React-Recharts Bridge Parsing error: ", e);
             }
-        }
+        };
 
-        // Initialize on load
-        window.addEventListener("load", () => {
-            initD3Chart();
-            
-            // Handle window resizing
-            window.addEventListener("resize", () => {
-                initD3Chart();
-                updateD3Chart();
-            });
-        });
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
     </script>
 </body>
 </html>
