@@ -24,7 +24,7 @@ android {
         val envFile = project.rootProject.file(".env")
         var geminiKey = ""
         if (envFile.exists()) {
-            for (line in envFile.readLines()) {
+            envFile.readLines().forEach { line ->
                 val trimmed = line.trim()
                 if (trimmed.startsWith("GEMINI_API_KEY=")) {
                     geminiKey = trimmed.substringAfter("GEMINI_API_KEY=").trim()
@@ -55,7 +55,7 @@ android {
         buildConfig = true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
+        kotlinCompilerExtensionVersion = "1.5.8"
     }
     packaging {
         resources {
@@ -90,4 +90,7 @@ dependencies {
 
     // OkHttp for Gemini REST API
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // USB Serial
+    implementation("com.github.mik3y:usb-serial-for-android:3.7.0")
 }

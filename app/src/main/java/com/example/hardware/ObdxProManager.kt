@@ -6,6 +6,10 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.pm.PackageManager
+import android.hardware.usb.UsbManager
+import android.hardware.usb.UsbDevice
+import com.hoho.android.usbserial.driver.UsbSerialProber
+import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.example.data.model.LogDataPoint
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -121,7 +125,26 @@ data class BluetoothDeviceInfo(
     val address: String
 )
 
+enum class ConnectionType {
+    BLUETOOTH,
+    USB_SERIAL
+}
+
 class ObdxProManager(private val context: Context? = null) {
+
+    // Active generic stream references (Bluetooth or USB Serial)
+    private var activeInputStream: InputStream? = null
+    private var activeOutputStream: OutputStream? = null
+
+    // USB Serial reference
+    private var usbSerialPort: com.hoho.android.usbserial.driver.UsbSerialPort? = null
+
+    private val _connectionType = MutableStateFlow(ConnectionType.BLUETOOTH)
+    val connectionType: StateFlow<ConnectionType> = _connectionType
+
+    fun setConnectionType(type: ConnectionType) {
+        _connectionType.value = type
+    }
 
     // Bluetooth reference fields
     private var bluetoothSocket: BluetoothSocket? = null
@@ -249,7 +272,7 @@ class ObdxProManager(private val context: Context? = null) {
         connectionMonitorJob = scope.launch {
             emitTerminalLog("Connection monitor started (Heartbeat & J1850 J1850 Class 2 Keep-Alive enabled).")
             var tick = 0
-            while (isActive && bluetoothSocket != null) {
+            while (isActive && activeInputStream != null) {
                 val state = _connectionState.value
                 if (state == ConnectionState.CONNECTED_READY) {
                     socketMutex.withLock {
@@ -292,7 +315,7 @@ class ObdxProManager(private val context: Context? = null) {
     }
 
     fun writeRaw(bytes: ByteArray): Int {
-        val outStream = bluetoothOutputStream
+        val outStream = activeOutputStream
         if (outStream != null) {
             return try {
                 outStream.write(bytes)
@@ -307,7 +330,7 @@ class ObdxProManager(private val context: Context? = null) {
     }
 
     fun readRaw(buffer: ByteArray, timeoutMs: Int = 1000): Int {
-        val inStream = bluetoothInputStream
+        val inStream = activeInputStream
         if (inStream != null) {
             return try {
                 val startTime = System.currentTimeMillis()
@@ -377,8 +400,146 @@ class ObdxProManager(private val context: Context? = null) {
         communicationJob?.cancel()
         communicationJob = scope.launch {
             _connectionState.value = ConnectionState.CONNECTING
-            connectBluetoothDeviceInternal()
+            if (_connectionType.value == ConnectionType.USB_SERIAL) {
+                connectUsbSerialDeviceInternal()
+            } else {
+                connectBluetoothDeviceInternal()
+            }
         }
+    }
+
+    private suspend fun connectUsbSerialDeviceInternal() {
+        emitTerminalLog("Initializing USB Serial Connection to OBDX Pro USB...")
+        delay(300)
+
+        val ctx = context
+        if (ctx == null) {
+            emitTerminalLog("Error: Application context is missing.")
+            _connectionState.value = ConnectionState.DISCONNECTED
+            return
+        }
+
+        val usbManager = ctx.getSystemService(Context.USB_SERVICE) as? UsbManager
+        if (usbManager == null) {
+            emitTerminalLog("Error: USB Service is not available.")
+            _connectionState.value = ConnectionState.DISCONNECTED
+            return
+        }
+
+        emitTerminalLog("Scanning USB Bus for serial devices...")
+        val availableDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
+        if (availableDrivers.isEmpty()) {
+            emitTerminalLog("Error: No USB Serial devices detected.")
+            emitTerminalLog("Please connect your OBDX Pro USB adapter via USB OTG cable.")
+            _connectionState.value = ConnectionState.DISCONNECTED
+            return
+        }
+
+        // Find the first driver / device
+        val driver = availableDrivers[0]
+        val device = driver.device
+        emitTerminalLog("Found USB Serial Device: ${device.deviceName} (Vendor: ${device.vendorId}, Product: ${device.productId})")
+
+        // Check/request permission
+        if (!usbManager.hasPermission(device)) {
+            emitTerminalLog("Requesting USB Host permissions for device...")
+            
+            val permissionIntent = android.app.PendingIntent.getBroadcast(
+                ctx, 
+                0, 
+                android.content.Intent("com.android.example.USB_PERMISSION"), 
+                android.app.PendingIntent.FLAG_MUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            usbManager.requestPermission(device, permissionIntent)
+            
+            emitTerminalLog("USB Permission request dialog shown. Please grant permission and try again.")
+            _connectionState.value = ConnectionState.DISCONNECTED
+            return
+        }
+
+        emitTerminalLog("USB Permissions verified. Opening device connection...")
+        val connection = try {
+            usbManager.openDevice(device)
+        } catch (e: Exception) {
+            emitTerminalLog("Error: Failed to open USB Device: ${e.localizedMessage}")
+            _connectionState.value = ConnectionState.DISCONNECTED
+            return
+        }
+
+        if (connection == null) {
+            emitTerminalLog("Error: USB connection is null. Permission might have been denied or device occupied.")
+            _connectionState.value = ConnectionState.DISCONNECTED
+            return
+        }
+
+        val port = driver.ports[0]
+        try {
+            port.open(connection)
+            
+            val speed = _baudRate.value
+            val bits = _dataBits.value
+            val stop = _stopBits.value
+            val par = when (_parity.value.uppercase()) {
+                "EVEN" -> UsbSerialPort.PARITY_EVEN
+                "ODD" -> UsbSerialPort.PARITY_ODD
+                else -> UsbSerialPort.PARITY_NONE
+            }
+            port.setParameters(speed, bits, stop, par)
+            
+            try {
+                port.dtr = true
+                port.rts = true
+            } catch (e: Exception) {
+                emitTerminalLog("Warning: Could not set DTR/RTS: ${e.localizedMessage}")
+            }
+
+            usbSerialPort = port
+            
+            activeInputStream = object : java.io.InputStream() {
+                override fun read(): Int {
+                    val buf = ByteArray(1)
+                    val len = port.read(buf, 100)
+                    return if (len > 0) buf[0].toInt() and 0xFF else -1
+                }
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    val temp = ByteArray(len)
+                    val bytesRead = port.read(temp, 100)
+                    if (bytesRead > 0) {
+                        System.arraycopy(temp, 0, b, off, bytesRead)
+                        return bytesRead
+                    }
+                    return 0
+                }
+                override fun available(): Int {
+                    return 1
+                }
+            }
+
+            activeOutputStream = object : java.io.OutputStream() {
+                override fun write(b: Int) {
+                    port.write(byteArrayOf(b.toByte()), 100)
+                }
+                override fun write(b: ByteArray, off: Int, len: Int) {
+                    val temp = if (off == 0 && len == b.size) {
+                        b
+                    } else {
+                        val t = ByteArray(len)
+                        System.arraycopy(b, off, t, 0, len)
+                        t
+                    }
+                    port.write(temp, 100)
+                }
+            }
+
+            emitTerminalLog("USB Serial connection established successfully!")
+        } catch (e: Exception) {
+            emitTerminalLog("Error: Failed to configure USB Serial port: ${e.localizedMessage}")
+            try { port.close() } catch (ex: Exception) {}
+            _connectionState.value = ConnectionState.DISCONNECTED
+            return
+        }
+
+        runHandshakeSequence()
     }
 
     private suspend fun connectBluetoothDeviceInternal() {
@@ -497,6 +658,8 @@ class ObdxProManager(private val context: Context? = null) {
             socket.connect()
             bluetoothOutputStream = socket.outputStream
             bluetoothInputStream = socket.inputStream
+            activeOutputStream = socket.outputStream
+            activeInputStream = socket.inputStream
             emitTerminalLog("RFCOMM Bluetooth connection established successfully!")
         } catch (e: Exception) {
             emitTerminalLog("Warning: Standard RFCOMM connection failed: ${e.localizedMessage}")
@@ -508,6 +671,8 @@ class ObdxProManager(private val context: Context? = null) {
                 bluetoothSocket = fallbackSocket
                 bluetoothOutputStream = fallbackSocket.outputStream
                 bluetoothInputStream = fallbackSocket.inputStream
+                activeOutputStream = fallbackSocket.outputStream
+                activeInputStream = fallbackSocket.inputStream
                 emitTerminalLog("Fallback RFCOMM connection established successfully!")
             } catch (fallbackEx: Exception) {
                 emitTerminalLog("Error: Fallback connection failed: ${fallbackEx.localizedMessage}")
@@ -825,13 +990,21 @@ class ObdxProManager(private val context: Context? = null) {
         communicationJob?.cancel()
         
         try {
+            activeInputStream?.close()
+            activeOutputStream?.close()
             bluetoothInputStream?.close()
             bluetoothOutputStream?.close()
             bluetoothSocket?.close()
         } catch (e: Exception) {}
+        try {
+            usbSerialPort?.close()
+        } catch (e: Exception) {}
+        activeInputStream = null
+        activeOutputStream = null
         bluetoothInputStream = null
         bluetoothOutputStream = null
         bluetoothSocket = null
+        usbSerialPort = null
         
         _supportedPids.value = emptyList()
         _connectionState.value = ConnectionState.DISCONNECTED
@@ -918,7 +1091,7 @@ class ObdxProManager(private val context: Context? = null) {
 
     // High speed physical flasher engine (for GM P59 ECM)
     fun executePlatformFlash(operation: String, useHighSpeed: Boolean, binaryData: ByteArray? = null) {
-        if (_connectionState.value == ConnectionState.DISCONNECTED || bluetoothSocket == null) {
+        if (_connectionState.value == ConnectionState.DISCONNECTED || (bluetoothSocket == null && usbSerialPort == null)) {
             scope.launch {
                 emitTerminalLog("Error: Device disconnected. Please connect OBDX Pro interface first.")
             }
@@ -1190,7 +1363,7 @@ class ObdxProManager(private val context: Context? = null) {
 
     // Real-time logger engine - gathers telemetry and feeds LiveDataStream
     fun startLogging(sessionId: Int) {
-        if (_connectionState.value == ConnectionState.DISCONNECTED || bluetoothSocket == null) {
+        if (_connectionState.value == ConnectionState.DISCONNECTED || (bluetoothSocket == null && usbSerialPort == null)) {
             scope.launch {
                 emitTerminalLog("Error: Physical device not connected. Cannot start live telemetry logging.")
             }

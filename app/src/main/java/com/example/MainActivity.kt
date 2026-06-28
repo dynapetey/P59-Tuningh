@@ -3923,6 +3923,75 @@ fun ObdxConnectionTabContent(viewModel: TunerViewModel) {
                 }
             }
 
+            // Connection Type Selector Card
+            val connectionType by obdxManager.connectionType.collectAsState()
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardSurfaceColor),
+                border = BorderStroke(1.dp, BorderGrey),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = "CONNECTION INTERFACE",
+                        color = Color.Gray,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { obdxManager.setConnectionType(com.example.hardware.ConnectionType.BLUETOOTH) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (connectionType == com.example.hardware.ConnectionType.BLUETOOTH) GlowingBlue else Color(0xFF14171D)
+                            ),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.weight(1f),
+                            border = BorderStroke(1.dp, if (connectionType == com.example.hardware.ConnectionType.BLUETOOTH) GlowingBlue else BorderGrey)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Bluetooth",
+                                modifier = Modifier.size(14.dp),
+                                tint = if (connectionType == com.example.hardware.ConnectionType.BLUETOOTH) Color.Black else Color.White
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "BLUETOOTH",
+                                color = if (connectionType == com.example.hardware.ConnectionType.BLUETOOTH) Color.Black else Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Button(
+                            onClick = { obdxManager.setConnectionType(com.example.hardware.ConnectionType.USB_SERIAL) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (connectionType == com.example.hardware.ConnectionType.USB_SERIAL) GlowingBlue else Color(0xFF14171D)
+                            ),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.weight(1f),
+                            border = BorderStroke(1.dp, if (connectionType == com.example.hardware.ConnectionType.USB_SERIAL) GlowingBlue else BorderGrey)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Build,
+                                contentDescription = "USB Serial",
+                                modifier = Modifier.size(14.dp),
+                                tint = if (connectionType == com.example.hardware.ConnectionType.USB_SERIAL) Color.Black else Color.White
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "USB SERIAL",
+                                color = if (connectionType == com.example.hardware.ConnectionType.USB_SERIAL) Color.Black else Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
             // 1. Connection Profile (PCM Hammer Profile vs Custom)
             Card(
                 colors = CardDefaults.cardColors(containerColor = CardSurfaceColor),
@@ -3959,89 +4028,112 @@ fun ObdxConnectionTabContent(viewModel: TunerViewModel) {
                 }
             }
 
-            // 2. Select OBDX Pro Device (Paired list)
-            Card(
-                colors = CardDefaults.cardColors(containerColor = CardSurfaceColor),
-                border = BorderStroke(1.dp, BorderGrey),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+            // 2. Select OBDX Pro Device (Paired list) / USB Status
+            if (connectionType == com.example.hardware.ConnectionType.BLUETOOTH) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = CardSurfaceColor),
+                    border = BorderStroke(1.dp, BorderGrey),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "SELECT DEVICE",
+                                color = Color.Gray,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "REFRESH",
+                                color = GlowingBlue,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .clickable { pairedDevices = obdxManager.getPairedDevices() }
+                                    .padding(4.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        
+                        val selectedDevice = pairedDevices.find { it.address == selectedAddress }
+                        var devDropdownExpanded by remember { mutableStateOf(false) }
+                        
+                        Box {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF14171D))
+                                    .border(1.dp, BorderGrey, RoundedCornerShape(6.dp))
+                                    .clickable { devDropdownExpanded = true }
+                                    .padding(vertical = 10.dp, horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = selectedDevice?.let { "${it.name} (${it.address})" } ?: "Auto-detect / First compatible OBDX adapter",
+                                    color = if (selectedDevice != null) Color.White else GlowingBlue,
+                                    fontSize = 12.sp,
+                                    maxLines = 1
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = "Expand",
+                                    tint = Color.Gray,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = devDropdownExpanded,
+                                onDismissRequest = { devDropdownExpanded = false },
+                                modifier = Modifier
+                                    .background(CardSurfaceColor)
+                                    .border(1.dp, BorderGrey, RoundedCornerShape(6.dp))
+                                    .fillMaxWidth(0.9f)
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Auto-detect / First compatible OBDX adapter", color = GlowingBlue, fontSize = 12.sp) },
+                                    onClick = {
+                                        obdxManager.setSelectedDeviceAddress(null)
+                                        devDropdownExpanded = false
+                                    }
+                                )
+                                pairedDevices.forEach { dev ->
+                                    DropdownMenuItem(
+                                        text = { Text("${dev.name} (${dev.address})", color = Color.White, fontSize = 12.sp) },
+                                        onClick = {
+                                            obdxManager.setSelectedDeviceAddress(dev.address)
+                                            devDropdownExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = CardSurfaceColor),
+                    border = BorderStroke(1.dp, BorderGrey),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            text = "SELECT DEVICE",
+                            text = "USB SERIAL DETECT STATUS",
                             color = Color.Gray,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "REFRESH",
+                            text = "Connect OBDX Pro USB interface using USB OTG Adapter. The application will auto-probe the USB bus and request device handshake permissions.",
                             color = GlowingBlue,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .clickable { pairedDevices = obdxManager.getPairedDevices() }
-                                .padding(4.dp)
+                            fontSize = 11.sp
                         )
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    
-                    val selectedDevice = pairedDevices.find { it.address == selectedAddress }
-                    var devDropdownExpanded by remember { mutableStateOf(false) }
-                    
-                    Box {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFF14171D))
-                                .border(1.dp, BorderGrey, RoundedCornerShape(6.dp))
-                                .clickable { devDropdownExpanded = true }
-                                .padding(vertical = 10.dp, horizontal = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = selectedDevice?.let { "${it.name} (${it.address})" } ?: "Auto-detect / First compatible OBDX adapter",
-                                color = if (selectedDevice != null) Color.White else GlowingBlue,
-                                fontSize = 12.sp,
-                                maxLines = 1
-                            )
-                            Icon(
-                                imageVector = Icons.Default.ArrowDropDown,
-                                contentDescription = "Expand",
-                                tint = Color.Gray,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = devDropdownExpanded,
-                            onDismissRequest = { devDropdownExpanded = false },
-                            modifier = Modifier
-                                .background(CardSurfaceColor)
-                                .border(1.dp, BorderGrey, RoundedCornerShape(6.dp))
-                                .fillMaxWidth(0.9f)
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Auto-detect / First compatible OBDX adapter", color = GlowingBlue, fontSize = 12.sp) },
-                                onClick = {
-                                    obdxManager.setSelectedDeviceAddress(null)
-                                    devDropdownExpanded = false
-                                }
-                            )
-                            pairedDevices.forEach { dev ->
-                                DropdownMenuItem(
-                                    text = { Text("${dev.name} (${dev.address})", color = Color.White, fontSize = 12.sp) },
-                                    onClick = {
-                                        obdxManager.setSelectedDeviceAddress(dev.address)
-                                        devDropdownExpanded = false
-                                    }
-                                )
-                            }
-                        }
                     }
                 }
             }
