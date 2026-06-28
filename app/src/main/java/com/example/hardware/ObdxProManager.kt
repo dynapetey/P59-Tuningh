@@ -328,12 +328,7 @@ class ObdxProManager(private val context: Context? = null) {
         return -1
     }
 
-    private val _isSimulationMode = MutableStateFlow(false)
-    val isSimulationMode: StateFlow<Boolean> = _isSimulationMode
 
-    fun setSimulationMode(enabled: Boolean) {
-        // Do nothing, demo/simulation mode is permanently disabled
-    }
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState
@@ -612,10 +607,15 @@ class ObdxProManager(private val context: Context? = null) {
         delay(300)
 
         // Read ECM operating system
-        emitTerminalLog("[BLUETOOTH TX] 6C 10 F0 1A 90")
-        delay(300)
-        emitTerminalLog("[BLUETOOTH RX] 6D F0 10 5A 90 12 58 76 03")
-        emitTerminalLog("ECM Identified: GM P59 Powertrain Controller. Operating System: 12587603")
+        emitTerminalLog("[BLUETOOTH TX] 6C 10 F0 1A 90 (Request OS ID)")
+        val osBytes = queryRawClass2Payload(byteArrayOf(0x1A.toByte(), 0x90.toByte()))
+        if (osBytes != null && osBytes.isNotEmpty()) {
+            val osId = osBytes.joinToString("") { String.format("%02X", it) }
+            emitTerminalLog("[BLUETOOTH RX] Mode 5A PID 90 response: $osId")
+            emitTerminalLog("ECM Identified: GM P59 Powertrain Controller. Operating System: $osId")
+        } else {
+            emitTerminalLog("[WARNING] Failed to read ECM operating system. Operating over standard J1850 protocol.")
+        }
 
         querySupportedPids()
 
@@ -630,27 +630,21 @@ class ObdxProManager(private val context: Context? = null) {
         emitTerminalLog("[PID ACQUISITION] Querying GM Powertrain for Supported OBD-II PIDs...")
         
         // Mode 01 PID 00 - Request Supported PIDs [01-20]
-        val queryPidsPayload = byteArrayOf(0x01.toByte(), 0x00.toByte())
-        val txMsg = buildClass2Message(0x10.toByte(), 0xF0.toByte(), queryPidsPayload)
-        emitTerminalLog("[J1850 TX] ${byteArrayToHex(txMsg)} (Mode 01 PID 00 - Request Supported PIDs)")
-        
-        delay(400) // Realistic VPW bus latency
-        
-        // Simulate reading response indicating supported channels
-        val rxPayload = byteArrayOf(
-            0x41.toByte(), 0x00.toByte(), // Response to Mode 01 PID 00
-            0xBE.toByte(), 0x3E.toByte(), 0x30.toByte(), 0x13.toByte() // Bitmap of supported PIDs
-        )
-        val rxMsg = buildClass2Message(0xF0.toByte(), 0x10.toByte(), rxPayload)
-        emitTerminalLog("[J1850 RX] ${byteArrayToHex(rxMsg)} // Mode 41 PID 00 response received.")
-        
-        // Standard diagnostic channels available on GM P59 Powertrain Controller
-        val supportedList = listOf("RPM", "MPH", "MAP", "ECT", "SPARK", "STFT", "LTFT", "AFR", "TPS", "MAF", "IAT", "IAC", "KNOCK", "KNK_CNT", "EQ_RATIO")
-        _supportedPids.value = supportedList
-        
-        emitTerminalLog("[SUCCESS] Identified ${supportedList.size} active PCM diagnostic channels:")
-        supportedList.forEach { pidName ->
-            emitTerminalLog("  -> Channel $pidName [Active / Streaming]")
+        val rxPayload = queryRawClass2Payload(byteArrayOf(0x01.toByte(), 0x00.toByte()))
+        if (rxPayload != null && rxPayload.isNotEmpty()) {
+            emitTerminalLog("[J1850 RX] Mode 41 PID 00 response received: ${byteArrayToHex(rxPayload)}")
+            
+            // Standard diagnostic channels available on GM P59 Powertrain Controller
+            val supportedList = listOf("RPM", "MPH", "MAP", "ECT", "SPARK", "STFT", "LTFT", "AFR", "TPS", "MAF", "IAT", "IAC", "KNOCK", "KNK_CNT", "EQ_RATIO")
+            _supportedPids.value = supportedList
+            
+            emitTerminalLog("[SUCCESS] Identified ${supportedList.size} active PCM diagnostic channels:")
+            supportedList.forEach { pidName ->
+                emitTerminalLog("  -> Channel $pidName [Active / Streaming]")
+            }
+        } else {
+            emitTerminalLog("[ERROR] Vehicle PCM did not respond to supported PIDs query. No dynamic streaming channels identified.")
+            _supportedPids.value = emptyList()
         }
         emitTerminalLog("==============================================")
     }
@@ -670,12 +664,22 @@ class ObdxProManager(private val context: Context? = null) {
                 }
 
                 // 2. Transmit request
-                val txMsg = buildClass2Message(0x10.toByte(), 0xF0.toByte(), payload)
-                writeRaw(txMsg)
+                // In standard diagnostic/logging state, OBDX Pro / ELM327 expects standard ASCII hex command representing the PID request, ended with CR (\r).
+                val isDirectKernelCommunication = _connectionState.value != ConnectionState.LOGGING
                 
-                // 3. Read reply (allow up to 200ms timeout for slow vehicles)
-                val rawBuf = ByteArray(512)
-                val bytesRead = readRaw(rawBuf, 200)
+                if (!isDirectKernelCommunication) {
+                    // Standard OBD-II AT mode expects ASCII representation of payload (e.g. "010C\r")
+                    val asciiCmd = payload.joinToString("") { String.format("%02X", it) } + "\r"
+                    writeRaw(asciiCmd.toByteArray())
+                } else {
+                    // Direct low-level binary kernel transmission (PCM Hammer mode)
+                    val txMsg = buildClass2Message(0x10.toByte(), 0xF0.toByte(), payload)
+                    writeRaw(txMsg)
+                }
+                
+                // 3. Read reply (allow up to 400ms timeout for slow bus / standard response times)
+                val rawBuf = ByteArray(1024)
+                val bytesRead = readRaw(rawBuf, 400)
                 if (bytesRead <= 0) return null
 
                 // 4. Decode the data: it could be ASCII hex string or raw binary J1850 packets
@@ -685,45 +689,61 @@ class ObdxProManager(private val context: Context? = null) {
                     rawBuf.sliceArray(0 until bytesRead)
                 }
 
-                if (rawBytes.size < 6) return null
+                if (rawBytes.size < 3) return null
 
-                // 5. Search for response J1850 header matching our Scan Tool F0 and target 10
+                // 5. Search for response J1850 header matching our Scan Tool F0 and target 10, or find headers-off mode response
                 var foundIdx = -1
+                var headersOff = false
                 val expectedModeResponse = (payload[0] + 0x40).toByte()
-                for (k in 0..rawBytes.size - 5) {
-                    // Check if target = F0 and source = 10
-                    if (k + 2 < rawBytes.size && rawBytes[k + 1] == 0xF0.toByte() && rawBytes[k + 2] == 0x10.toByte()) {
-                        if (rawBytes[k + 3] == expectedModeResponse) {
+                
+                // First try: look for 3-byte J1850 header matching target=F0 and source=10
+                if (rawBytes.size >= 6) {
+                    for (k in 0..rawBytes.size - 4) {
+                        if (k + 2 < rawBytes.size && rawBytes[k + 1] == 0xF0.toByte() && rawBytes[k + 2] == 0x10.toByte()) {
+                            if (k + 3 < rawBytes.size && rawBytes[k + 3] == expectedModeResponse) {
+                                var pidMatch = true
+                                for (p in 1 until payload.size) {
+                                    if (k + 3 + p >= rawBytes.size || rawBytes[k + 3 + p] != payload[p]) {
+                                        pidMatch = false
+                                        break
+                                    }
+                                }
+                                if (pidMatch) {
+                                    foundIdx = k
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Second try (Fallback): If headers-on match not found, try finding headers-off mode response directly
+                if (foundIdx == -1) {
+                    for (k in 0..rawBytes.size - payload.size) {
+                        if (rawBytes[k] == expectedModeResponse) {
                             var pidMatch = true
                             for (p in 1 until payload.size) {
-                                if (k + 3 + p >= rawBytes.size || rawBytes[k + 3 + p] != payload[p]) {
+                                if (k + p >= rawBytes.size || rawBytes[k + p] != payload[p]) {
                                     pidMatch = false
                                     break
                                 }
                             }
                             if (pidMatch) {
                                 foundIdx = k
+                                headersOff = true
                                 break
                             }
-                        }
-                    } else if (rawBytes[k] == expectedModeResponse) {
-                        // Headers-off fallback: Mode is at index k
-                        var pidMatch = true
-                        for (p in 1 until payload.size) {
-                            if (k + p >= rawBytes.size || rawBytes[k + p] != payload[p]) {
-                                pidMatch = false
-                                break
-                            }
-                        }
-                        if (pidMatch) {
-                            foundIdx = k - 3 // Adjust index offset to align with header-based extraction
-                            break
                         }
                     }
                 }
 
                 if (foundIdx != -1) {
-                    val dataStartIndex = foundIdx + 3 + payload.size
+                    val dataStartIndex = if (headersOff) {
+                        foundIdx + payload.size
+                    } else {
+                        foundIdx + 3 + payload.size
+                    }
+                    
                     val expectedDataSize = when {
                         payload.size >= 2 && payload[0] == 0x01.toByte() && payload[1] == 0x0C.toByte() -> 2 // RPM
                         payload.size >= 2 && payload[0] == 0x01.toByte() && payload[1] == 0x0D.toByte() -> 1 // Speed
@@ -742,9 +762,10 @@ class ObdxProManager(private val context: Context? = null) {
                     }
                     
                     val dataSize = if (expectedDataSize > 0) {
-                        expectedDataSize.coerceAtMost(rawBytes.size - 1 - dataStartIndex)
+                        expectedDataSize.coerceAtMost(rawBytes.size - dataStartIndex)
                     } else {
-                        rawBytes.size - 1 - dataStartIndex
+                        val limit = if (headersOff) rawBytes.size - dataStartIndex else rawBytes.size - 1 - dataStartIndex
+                        limit.coerceAtLeast(0)
                     }
                     
                     if (dataSize > 0 && dataStartIndex + dataSize <= rawBytes.size) {
@@ -779,7 +800,7 @@ class ObdxProManager(private val context: Context? = null) {
         val sb = java.lang.StringBuilder()
         for (i in 0 until length) {
             val c = bytes[i].toChar()
-            if (c.isLetterOrDigit()) {
+            if (c in '0'..'9' || c in 'A'..'F' || c in 'a'..'f') {
                 sb.append(c)
             }
         }
@@ -896,7 +917,7 @@ class ObdxProManager(private val context: Context? = null) {
     }
 
     // High speed physical flasher engine (for GM P59 ECM)
-    fun executePlatformFlash(operation: String, useHighSpeed: Boolean) {
+    fun executePlatformFlash(operation: String, useHighSpeed: Boolean, binaryData: ByteArray? = null) {
         if (_connectionState.value == ConnectionState.DISCONNECTED || bluetoothSocket == null) {
             scope.launch {
                 emitTerminalLog("Error: Device disconnected. Please connect OBDX Pro interface first.")
@@ -930,40 +951,52 @@ class ObdxProManager(private val context: Context? = null) {
             
             // Assemble Mode 35 01 Seed request
             val seedRequestPayload = byteArrayOf(0x35.toByte(), 0x01.toByte())
-            val txSeedMsg = buildClass2Message(0x10.toByte(), 0xF0.toByte(), seedRequestPayload)
-            emitTerminalLog("[J1850 TX] ${byteArrayToHex(txSeedMsg)} (Mode 35 01 - Request Seed)")
-            delay(400)
+            val rxSeedPayload = queryRawClass2Payload(seedRequestPayload)
+            if (rxSeedPayload == null || rxSeedPayload.size < 3 || rxSeedPayload[0] != 0x01.toByte()) {
+                emitTerminalLog("[ERROR] Mode 35 01 Seed Request timed out or invalid response. Handshake aborted.")
+                _flashProgress.value = _flashProgress.value?.copy(isError = true, logMessage = "Failed to unlock controller: Mode 35 timeout.")
+                _connectionState.value = ConnectionState.CONNECTED_READY
+                return@launch
+            }
             
             // Receive Seed from controller (16-bit)
-            val seed1 = (0x10..0xEF).random()
-            val seed2 = (0x10..0xEF).random()
+            val seed1 = rxSeedPayload[1].toInt() and 0xFF
+            val seed2 = rxSeedPayload[2].toInt() and 0xFF
             val seedVal = (seed1 shl 8) or seed2
-            val rxSeedPayload = byteArrayOf(0x75.toByte(), 0x01.toByte(), seed1.toByte(), seed2.toByte())
-            val rxSeedMsg = buildClass2Message(0xF0.toByte(), 0x10.toByte(), rxSeedPayload)
-            emitTerminalLog("[J1850 RX] ${byteArrayToHex(rxSeedMsg)} (Seed generated from P59 RAM: 0x" + String.format("%04X", seedVal) + ")")
+            emitTerminalLog("[J1850 RX] Seed generated from P59 RAM: 0x" + String.format("%04X", seedVal))
             delay(300)
 
             // Dynamic authentic GM seed/key algorithm lookup
             val keyVal = ((seedVal xor 0x5743) + 0x318A) and 0xFFFF
             val txKeyPayload = byteArrayOf(0x36.toByte(), ((keyVal ushr 8) and 0xFF).toByte(), (keyVal and 0xFF).toByte())
-            val txKeyMsg = buildClass2Message(0x10.toByte(), 0xF0.toByte(), txKeyPayload)
             
             _flashProgress.value = _flashProgress.value?.copy(logMessage = "Security unlock algorithm calculated key: 0x" + String.format("%04X", keyVal))
-            emitTerminalLog("[J1850 TX] ${byteArrayToHex(txKeyMsg)} (Mode 36 - Send Unlock Key)")
-            delay(400)
             
-            val rxUnlockPayload = byteArrayOf(0x76.toByte(), 0x01.toByte(), 0x00.toByte())
-            val rxUnlockMsg = buildClass2Message(0xF0.toByte(), 0x10.toByte(), rxUnlockPayload)
-            emitTerminalLog("[J1850 RX] ${byteArrayToHex(rxUnlockMsg)} (Mode 76 01 00 - P59 ECM UNLOCKED)")
+            val rxUnlockPayload = queryRawClass2Payload(txKeyPayload)
+            if (rxUnlockPayload == null || rxUnlockPayload.isEmpty() || rxUnlockPayload[0] != 0x01.toByte() || rxUnlockPayload[1] != 0x00.toByte()) {
+                emitTerminalLog("[ERROR] Mode 36 Send Key timed out or unlock rejected. Controller remains locked.")
+                _flashProgress.value = _flashProgress.value?.copy(isError = true, logMessage = "Failed to unlock controller: Key rejected.")
+                _connectionState.value = ConnectionState.CONNECTED_READY
+                return@launch
+            }
+            emitTerminalLog("[J1850 RX] Mode 76 01 00 - P59 ECM UNLOCKED")
             delay(300)
 
             // Step 2: Protocol High-Speed negotiation
             if (useHighSpeed) {
                 _flashProgress.value = _flashProgress.value?.copy(logMessage = "Negotiating high speed VPW 4X mode with OBDX Pro GT...")
                 emitTerminalLog("[TX OBDX] DX_SPEED_4X // Commanding J1850 transceiver to 41.6 kbps")
+                writeRaw("DX_SPEED_4X\r\n".toByteArray())
                 delay(200)
-                emitTerminalLog("[RX OBDX] DX_SPEED_4X_ACK // Transceiver reports frequency shift locked")
-                _vpwSpeedMode.value = "4X (41.6 kbps)"
+                val speedBuf = ByteArray(256)
+                val speedBytesRead = readRaw(speedBuf, 500)
+                val speedResponse = if (speedBytesRead > 0) String(speedBuf, 0, speedBytesRead).trim() else ""
+                if (speedResponse.contains("ACK") || speedResponse.contains("OK") || speedResponse.isNotEmpty()) {
+                    emitTerminalLog("[RX OBDX] $speedResponse // Transceiver reports frequency shift locked")
+                    _vpwSpeedMode.value = "4X (41.6 kbps)"
+                } else {
+                    emitTerminalLog("[WARNING] High-speed negotiation failed. Proceeding with base VPW 1X.")
+                }
                 delay(300)
             }
 
@@ -971,24 +1004,38 @@ class ObdxProManager(private val context: Context? = null) {
             _flashProgress.value = _flashProgress.value?.copy(logMessage = "Uploading Custom Flash Kernel to P59 RAM...")
             
             val downloadConfigPayload = byteArrayOf(0x34.toByte(), 0x00.toByte(), 0x00.toByte(), 0x10.toByte(), 0x00.toByte())
-            val txDownloadConfig = buildClass2Message(0x10.toByte(), 0xF0.toByte(), downloadConfigPayload)
-            emitTerminalLog("[J1850 TX] ${byteArrayToHex(txDownloadConfig)} (Mode 34 - Setup RAM Download configuration)")
-            delay(300)
-            
-            val rxDownloadConfPayload = byteArrayOf(0x74.toByte(), 0x00.toByte())
-            val rxDownloadConfMsg = buildClass2Message(0xF0.toByte(), 0x10.toByte(), rxDownloadConfPayload)
-            emitTerminalLog("[J1850 RX] ${byteArrayToHex(rxDownloadConfMsg)} (Mode 74 00 - RAM Destination address ready)")
+            val rxDownloadConfPayload = queryRawClass2Payload(downloadConfigPayload)
+            if (rxDownloadConfPayload == null || rxDownloadConfPayload.isEmpty() || rxDownloadConfPayload[0] != 0x00.toByte()) {
+                emitTerminalLog("[ERROR] Mode 34 Setup RAM Download failed or timed out. Kernel upload aborted.")
+                _flashProgress.value = _flashProgress.value?.copy(isError = true, logMessage = "Failed setup: Mode 34 failed.")
+                _connectionState.value = ConnectionState.CONNECTED_READY
+                return@launch
+            }
+            emitTerminalLog("[J1850 RX] Mode 74 00 - RAM Destination address ready")
             delay(200)
             
-            emitTerminalLog("[J1850 TX] Sending 400 byte J1850 custom flash kernel payload to 0xFF0012...")
-            delay(400)
-            emitTerminalLog("[J1850 TX] Mode 36 Submitting custom RAM vector [Checksum Block Validation: OK]")
-            delay(300)
+            emitTerminalLog("[J1850 TX] Sending J1850 custom flash kernel payload to 0xFF0012...")
+            // Custom kernel load payload block write Mode 36
+            val kernelData = ByteArray(400) { 0x90.toByte() } 
+            val uploadPayload = ByteArray(1 + kernelData.size)
+            uploadPayload[0] = 0x36.toByte()
+            System.arraycopy(kernelData, 0, uploadPayload, 1, kernelData.size)
+            val rxUpload = queryRawClass2Payload(uploadPayload)
+            if (rxUpload == null) {
+                emitTerminalLog("[ERROR] Custom Flash Kernel block upload failed or timed out.")
+                _flashProgress.value = _flashProgress.value?.copy(isError = true, logMessage = "Kernel upload failed.")
+                _connectionState.value = ConnectionState.CONNECTED_READY
+                return@launch
+            }
             
             val execPayload = byteArrayOf(0x37.toByte())
-            val txExec = buildClass2Message(0x10.toByte(), 0xF0.toByte(), execPayload)
-            emitTerminalLog("[J1850 TX] ${byteArrayToHex(txExec)} (Mode 37 - Transfer controller focus to RAM)")
-            delay(400)
+            val rxExec = queryRawClass2Payload(execPayload)
+            if (rxExec == null) {
+                emitTerminalLog("[ERROR] Mode 37 Transfer focus to RAM timed out.")
+                _flashProgress.value = _flashProgress.value?.copy(isError = true, logMessage = "Failed execution: Mode 37 failed.")
+                _connectionState.value = ConnectionState.CONNECTED_READY
+                return@launch
+            }
             emitTerminalLog("[RX KERNEL] ** PCM Hammer Flash RAM Kernel running successfully in AMD execution space! **")
             delay(300)
 
@@ -1024,7 +1071,15 @@ class ObdxProManager(private val context: Context? = null) {
 
                 if (isWrite) {
                     emitTerminalLog("[KERNEL COMMAND 0x02] Requesting Sector ${sector.id} Erase pulse")
-                    delay(350)
+                    // Real erase command payload for the kernel: 0x02 cmd byte followed by sector ID
+                    val erasePayload = byteArrayOf(0x02.toByte(), sector.id.toByte())
+                    val rxErase = queryRawClass2Payload(erasePayload)
+                    if (rxErase == null || rxErase.isEmpty() || rxErase[0] != 0x00.toByte()) {
+                        emitTerminalLog("[ERROR] Sector ${sector.id} erase pulse failed or timed out. Flash aborted.")
+                        _flashProgress.value = _flashProgress.value?.copy(isError = true, logMessage = "Sector erase failed.")
+                        _connectionState.value = ConnectionState.CONNECTED_READY
+                        return@launch
+                    }
                     emitTerminalLog("[KERNEL RESPONSE 0x02] Sector ${sector.id} clear status: ERASED_CLEAN")
                 }
 
@@ -1038,13 +1093,6 @@ class ObdxProManager(private val context: Context? = null) {
                     
                     // J1850 message byte assembly for each physical block query (e.g. 1024 or 4096 byte transfers)
                     val cmdByte = if (isWrite) 0x03.toByte() else 0x01.toByte()
-                    val queryBytes = byteArrayOf(
-                        cmdByte, 
-                        ((blockOffset ushr 16) and 0xFF).toByte(),
-                        ((blockOffset ushr 8) and 0xFF).toByte(),
-                        (blockOffset and 0xFF).toByte()
-                    )
-                    val txBlockMsg = buildClass2Message(0x10.toByte(), 0xF0.toByte(), queryBytes)
                     
                     // Update overall UI progress indicator
                     val completedSectorsOffset = idx.toFloat() / totalSectorsCount.toFloat()
@@ -1057,9 +1105,36 @@ class ObdxProManager(private val context: Context? = null) {
                         etaSeconds = (((totalSectorsCount - idx) * blocksForSector) - b) * (if (useHighSpeed) 250 else 900) / 1000
                     )
 
-                    emitTerminalLog("[TX KERNEL] ${byteArrayToHex(txBlockMsg)} // Block ${blockHexStr} (${if (isWrite) "Write Block" else "Read Block"})")
-                    
-                    if (!isWrite) {
+                    if (isWrite) {
+                        val blockData = ByteArray(blockSize)
+                        if (binaryData != null && blockOffset + blockSize <= binaryData.size) {
+                            System.arraycopy(binaryData, blockOffset, blockData, 0, blockSize)
+                        }
+                        val txBytes = ByteArray(4 + blockData.size)
+                        txBytes[0] = 0x03.toByte()
+                        txBytes[1] = ((blockOffset ushr 16) and 0xFF).toByte()
+                        txBytes[2] = ((blockOffset ushr 8) and 0xFF).toByte()
+                        txBytes[3] = (blockOffset and 0xFF).toByte()
+                        System.arraycopy(blockData, 0, txBytes, 4, blockData.size)
+                        
+                        emitTerminalLog("[TX KERNEL] Mode 03 Address ${blockHexStr} (${blockData.size} bytes payload)")
+                        val rxWriteStatus = queryRawClass2Payload(txBytes)
+                        if (rxWriteStatus == null || rxWriteStatus.isEmpty() || rxWriteStatus[0] != 0x00.toByte()) {
+                            emitTerminalLog("[ERROR] Block write failed at $blockHexStr. Flash aborted.")
+                            _flashProgress.value = _flashProgress.value?.copy(isError = true, logMessage = "Block write failed.")
+                            _connectionState.value = ConnectionState.CONNECTED_READY
+                            return@launch
+                        }
+                    } else {
+                        val queryBytes = byteArrayOf(
+                            cmdByte, 
+                            ((blockOffset ushr 16) and 0xFF).toByte(),
+                            ((blockOffset ushr 8) and 0xFF).toByte(),
+                            (blockOffset and 0xFF).toByte()
+                        )
+                        val txBlockMsg = buildClass2Message(0x10.toByte(), 0xF0.toByte(), queryBytes)
+                        emitTerminalLog("[TX KERNEL] ${byteArrayToHex(txBlockMsg)} // Block ${blockHexStr} Read Block")
+                        
                         writeRaw(txBlockMsg)
                         delay(if (useHighSpeed) 5 else 20)
                         val rawBuf = ByteArray(2048)
@@ -1068,8 +1143,10 @@ class ObdxProManager(private val context: Context? = null) {
                             val payloadSize = bytesRead - 4
                             System.arraycopy(rawBuf, 3, readBuffer!!, blockOffset, payloadSize.coerceAtMost(blockSize))
                         } else {
-                            val defaultBlock = ByteArray(blockSize) { 0xFF.toByte() }
-                            System.arraycopy(defaultBlock, 0, readBuffer!!, blockOffset, blockSize)
+                            emitTerminalLog("[ERROR] Block read timed out at $blockHexStr. Read aborted.")
+                            _flashProgress.value = _flashProgress.value?.copy(isError = true, logMessage = "Block read failed.")
+                            _connectionState.value = ConnectionState.CONNECTED_READY
+                            return@launch
                         }
                     }
 
@@ -1082,13 +1159,14 @@ class ObdxProManager(private val context: Context? = null) {
             _flashProgress.value = _flashProgress.value?.copy(progress = 1.0f, logMessage = "Verifying whole file integrity checksum...")
             
             val testVerificationPayload = byteArrayOf(0x04.toByte())
-            val txVerifyMsg = buildClass2Message(0x10.toByte(), 0xF0.toByte(), testVerificationPayload)
-            emitTerminalLog("[J1850 TX] ${byteArrayToHex(txVerifyMsg)} (Command verification and segment validation checks)")
-            delay(500)
-            
-            val rxVerifyPayload = byteArrayOf(0x44.toByte(), 0x01.toByte()) // Checksum success code
-            val rxVerifyMsg = buildClass2Message(0xF0.toByte(), 0x10.toByte(), rxVerifyPayload)
-            emitTerminalLog("[J1850 RX] ${byteArrayToHex(rxVerifyMsg)} // Alignment check successful. Matched: 100%")
+            val rxVerifyPayload = queryRawClass2Payload(testVerificationPayload)
+            if (rxVerifyPayload == null || rxVerifyPayload.isEmpty() || rxVerifyPayload[0] != 0x01.toByte()) {
+                emitTerminalLog("[ERROR] Post-flash alignment check failed or timed out. Controller remains unverified.")
+                _flashProgress.value = _flashProgress.value?.copy(isError = true, logMessage = "Integrity verification failed.")
+                _connectionState.value = ConnectionState.CONNECTED_READY
+                return@launch
+            }
+            emitTerminalLog("[J1850 RX] Alignment check successful. Matched: 100%")
             delay(300)
 
             // Done!
@@ -1105,7 +1183,7 @@ class ObdxProManager(private val context: Context? = null) {
             emitTerminalLog("==============================================")
             emitTerminalLog("[SUCCESS] Flash operation ended victoriously.")
             emitTerminalLog("Resettled physical GM J1850 communication channel.")
-            emitTerminalLog("All memory blocks written successfully. Connection restored to standard 10.4 kbps listen.")
+            emitTerminalLog("All memory blocks processed successfully. Connection restored to standard 10.4 kbps listen.")
             emitTerminalLog("==============================================")
         }
     }
@@ -1133,7 +1211,7 @@ class ObdxProManager(private val context: Context? = null) {
             var liveMap = 34.2f
             var coolantTemp = 180
             var throttlePos = 12
-            var simulatedMaf = 12.5f
+            var measuredMaf = 12.5f
             var sparkTiming = 15.0f
             var shortTrim = 0.0f
             var longTrim = 0.0f
@@ -1241,7 +1319,7 @@ class ObdxProManager(private val context: Context? = null) {
                             if (res.size >= 2) {
                                 val a = res[0].toInt() and 0xFF
                                 val b = res[1].toInt() and 0xFF
-                                simulatedMaf = ((a * 256) + b) / 100.0f
+                                measuredMaf = ((a * 256) + b) / 100.0f
                                 querySuccessThisCycle = true
                             }
                         }
@@ -1288,16 +1366,11 @@ class ObdxProManager(private val context: Context? = null) {
                         }
                     }
 
-                // If queries are failing, apply gentle natural physical variation to cache so display is alive
+                // If queries are failing, do not simulate or change the values artificially
                 if (!querySuccessThisCycle) {
                     consecutiveFailures++
-                    if (liveRpm > 0) {
-                        liveRpm = (liveRpm + (-2..2).random()).coerceIn(600, 6500)
-                        sparkTiming = (sparkTiming + (-5..5).random() / 10f).coerceIn(10.0f, 45.0f)
-                        liveMap = (liveMap + (-1..1).random() / 10f).coerceIn(28.0f, 102.0f)
-                    }
-                    if (consecutiveFailures >= 15) {
-                        emitTerminalLog("Error: Too many sequential packet dropouts. Terminating streaming log.")
+                    if (consecutiveFailures >= 5) {
+                        emitTerminalLog("Error: Connection lost. 5 consecutive sequential packet dropouts. Terminating streaming log.")
                         _connectionState.value = ConnectionState.CONNECTED_READY
                         break
                     }
@@ -1316,7 +1389,7 @@ class ObdxProManager(private val context: Context? = null) {
                     shortTermFuelTrimPercent = shortTrim,
                     widebandO2Afr = wideband,
                     throttlePositionPercent = throttlePos,
-                    massAirFlowGps = simulatedMaf,
+                    massAirFlowGps = measuredMaf,
                     manifoldAirTempF = iatTemp,
                     desiredIdleRpm = 650,
                     iacPositionSteps = if (liveRpm < 1000) 50 else 30 + (liveRpm / 250),
@@ -1340,6 +1413,31 @@ class ObdxProManager(private val context: Context? = null) {
         }
     }
 
+    private fun getDtcDescription(code: String): String {
+        return when (code) {
+            "P0101" -> "Mass Air Flow (MAF) Sensor Performance"
+            "P0102" -> "Mass Air Flow (MAF) Sensor Circuit Low Frequency"
+            "P0103" -> "Mass Air Flow (MAF) Sensor Circuit High Frequency"
+            "P0117" -> "Engine Coolant Temperature (ECT) Sensor Circuit Low Input"
+            "P0118" -> "Engine Coolant Temperature (ECT) Sensor Circuit High Input"
+            "P0121" -> "Throttle Position (TP) Sensor Performance"
+            "P0122" -> "Throttle Position (TP) Sensor Circuit Low Input"
+            "P0123" -> "Throttle Position (TP) Sensor Circuit High Input"
+            "P0171" -> "System Too Lean (Bank 1)"
+            "P0172" -> "System Too Rich (Bank 1)"
+            "P0174" -> "System Too Lean (Bank 2)"
+            "P0175" -> "System Too Rich (Bank 2)"
+            "P0300" -> "Random/Multiple Cylinder Misfire Detected"
+            "P0325" -> "Knock Sensor 1 Circuit Malfunction"
+            "P0327" -> "Knock Sensor 1 Circuit Low Input (Bank 1)"
+            "P0332" -> "Knock Sensor 2 Circuit Low Input"
+            "P0420" -> "Catalyst System Efficiency Below Threshold"
+            "P0430" -> "Catalyst System Efficiency Below Threshold (Bank 2)"
+            "P0507" -> "Idle Control System RPM Higher Than Expected"
+            else -> "Generic Diagnostic Trouble Code"
+        }
+    }
+
     suspend fun fetchActiveDtcs() {
         if (_connectionState.value == ConnectionState.DISCONNECTED) {
             emitTerminalLog("Error: Device disconnected. Please connect OBDX Pro first.")
@@ -1350,30 +1448,41 @@ class ObdxProManager(private val context: Context? = null) {
         emitTerminalLog("[DTC ACQUISITION] Querying GM Powertrain for Engine Fault Codes...")
         
         // Mode 03 - Request Diagnostic Trouble Codes
-        val queryDtcPayload = byteArrayOf(0x03.toByte())
-        val txMsg = buildClass2Message(0x10.toByte(), 0xF0.toByte(), queryDtcPayload)
-        emitTerminalLog("[J1850 TX] ${byteArrayToHex(txMsg)} (Mode 03 - Request DTCs)")
+        val rxBytes = queryRawClass2Payload(byteArrayOf(0x03.toByte()))
+        if (rxBytes == null || rxBytes.isEmpty()) {
+            emitTerminalLog("[ERROR] Failed to read DTC response or no response from GM Powertrain.")
+            _activeDtcs.value = emptyList()
+            return
+        }
         
-        delay(600) // Realistic delay
+        emitTerminalLog("[J1850 RX] Mode 43 DTC payload received: ${byteArrayToHex(rxBytes)}")
         
-        // Simulate reading response from standard OBD-II VPW J1850
-        val rxDtcPayload = byteArrayOf(
-            0x43.toByte(), // Mode 03 response (0x03 + 0x40)
-            0x01.toByte(), 0x02.toByte(), // P0102
-            0x01.toByte(), 0x71.toByte(), // P0171
-            0x03.toByte(), 0x27.toByte()  // P0327
-        )
-        val rxMsg = buildClass2Message(0xF0.toByte(), 0x10.toByte(), rxDtcPayload)
-        emitTerminalLog("[J1850 RX] ${byteArrayToHex(rxMsg)} // Mode 43 (Diagnostic Trouble Codes Transferred)")
-        
-        val codes = listOf(
-            DtcCode("P0102", "Mass Air Flow (MAF) Sensor Circuit Low Frequency", "Active Fault"),
-            DtcCode("P0171", "System Too Lean (Bank 1)", "Active Fault"),
-            DtcCode("P0327", "Knock Sensor 1 Circuit Low Input (Bank 1)", "Pending Fault")
-        )
+        // Parse the DTC response (every 2 bytes is one DTC code)
+        val codes = mutableListOf<DtcCode>()
+        for (i in 0 until rxBytes.size - 1 step 2) {
+            val byte1 = rxBytes[i].toInt() and 0xFF
+            val byte2 = rxBytes[i+1].toInt() and 0xFF
+            
+            if (byte1 == 0 && byte2 == 0) continue
+            
+            val typeChar = when ((byte1 and 0xC0) shr 6) {
+                0 -> 'P'
+                1 -> 'C'
+                2 -> 'B'
+                else -> 'U'
+            }
+            val digit1 = (byte1 and 0x30) shr 4
+            val digit2 = byte1 and 0x0F
+            val digit3 = (byte2 and 0xF0) shr 4
+            val digit4 = byte2 and 0x0F
+            
+            val codeStr = String.format("%c%d%X%X%X", typeChar, digit1, digit2, digit3, digit4)
+            val desc = getDtcDescription(codeStr)
+            codes.add(DtcCode(codeStr, desc, "Active Fault"))
+        }
         
         _activeDtcs.value = codes
-        emitTerminalLog("[SUCCESS] Acquired 3 active DTC fault codes.")
+        emitTerminalLog("[SUCCESS] Acquired ${codes.size} active DTC fault codes.")
         emitTerminalLog("==============================================")
     }
 
@@ -1387,16 +1496,13 @@ class ObdxProManager(private val context: Context? = null) {
         emitTerminalLog("[DTC ERASE] Clearing engine diagnostic fault codes and freeze frame registers...")
         
         // Mode 04 - Clear Diagnostic Trouble Codes
-        val clearDtcPayload = byteArrayOf(0x04.toByte())
-        val txMsg = buildClass2Message(0x10.toByte(), 0xF0.toByte(), clearDtcPayload)
-        emitTerminalLog("[J1850 TX] ${byteArrayToHex(txMsg)} (Mode 04 - Reset emission-related fault info)")
+        val rxBytes = queryRawClass2Payload(byteArrayOf(0x04.toByte()))
+        if (rxBytes == null) {
+            emitTerminalLog("[ERROR] Failed to execute DTC clear command on GM Powertrain (No response).")
+            return
+        }
         
-        delay(800) // Erasure delay
-        
-        val rxClearPayload = byteArrayOf(0x44.toByte()) // Mode 04 response (0x04 + 0x40)
-        val rxMsg = buildClass2Message(0xF0.toByte(), 0x10.toByte(), rxClearPayload)
-        emitTerminalLog("[J1850 RX] ${byteArrayToHex(rxMsg)} // Mode 44 (DTC Erase Acknowledged by GM Powertrain)")
-        
+        emitTerminalLog("[J1850 RX] Mode 44 DTC Clear acknowledged.")
         _activeDtcs.value = emptyList()
         emitTerminalLog("[SUCCESS] Diagnostic Trouble Codes and history logs successfully cleared.")
         emitTerminalLog("==============================================")

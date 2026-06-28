@@ -132,30 +132,37 @@ fun LiveTelemetryTableContent(
                     }
 
                     // Start/Stop recording controls
-                    if (activeSessionId == null) {
-                        Button(
-                            onClick = { viewModel.startLoggingSession() },
-                            colors = ButtonDefaults.buttonColors(containerColor = WarningRed),
-                            shape = RoundedCornerShape(6.dp),
-                            enabled = connectionState != ConnectionState.DISCONNECTED,
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                            modifier = Modifier.height(34.dp).testTag("table_start_log_btn")
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = "Record", modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("START LOG", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                    } else {
-                        Button(
-                            onClick = { viewModel.stopLoggingSession() },
-                            colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
-                            shape = RoundedCornerShape(6.dp),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                            modifier = Modifier.height(34.dp).testTag("table_stop_log_btn")
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "Stop", modifier = Modifier.size(14.dp), tint = Color.Black)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("STOP LOG", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        com.example.LiveExportCsvButton(viewModel = viewModel)
+
+                        if (activeSessionId == null) {
+                            Button(
+                                onClick = { viewModel.startLoggingSession() },
+                                colors = ButtonDefaults.buttonColors(containerColor = WarningRed),
+                                shape = RoundedCornerShape(6.dp),
+                                enabled = connectionState != ConnectionState.DISCONNECTED,
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                modifier = Modifier.height(34.dp).testTag("table_start_log_btn")
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = "Record", modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("START LOG", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            Button(
+                                onClick = { viewModel.stopLoggingSession() },
+                                colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                modifier = Modifier.height(34.dp).testTag("table_stop_log_btn")
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "Stop", modifier = Modifier.size(14.dp), tint = Color.Black)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("STOP LOG", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }

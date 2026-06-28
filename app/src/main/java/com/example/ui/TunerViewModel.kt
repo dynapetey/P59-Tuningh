@@ -95,6 +95,35 @@ class TunerViewModel(application: Application) : AndroidViewModel(application) {
     private val _historySessionPoints = MutableStateFlow<List<LogDataPoint>>(emptyList())
     val historySessionPoints: StateFlow<List<LogDataPoint>> = _historySessionPoints
 
+    private val _currentLiveSessionPoints = MutableStateFlow<List<LogDataPoint>>(emptyList())
+    val currentLiveSessionPoints: StateFlow<List<LogDataPoint>> = _currentLiveSessionPoints
+
+    fun getCsvData(points: List<LogDataPoint>): String {
+        val sb = java.lang.StringBuilder()
+        sb.append("TimestampOffsetMs,RPM,MPH,MAP_kPa,CoolantTemp_F,SparkAdvance_Deg,STFT_Pct,LTFT_Pct,Wideband_AFR,ThrottlePosition_Pct,MAF_gps,IAT_F,DesiredIdle_RPM,IAC_Steps,DwellTime_ms,KnockRetard_Deg,KnockCount,CommandedLambda\n")
+        for (p in points) {
+            sb.append("${p.timestampOffsetMs},")
+            sb.append("${p.rpm},")
+            sb.append("${p.mph},")
+            sb.append("${String.format(java.util.Locale.US, "%.2f", p.mapKpa)},")
+            sb.append("${p.coolantTempF},")
+            sb.append("${String.format(java.util.Locale.US, "%.2f", p.sparkAdvance)},")
+            sb.append("${String.format(java.util.Locale.US, "%.2f", p.shortTermFuelTrimPercent)},")
+            sb.append("${String.format(java.util.Locale.US, "%.2f", p.longTermFuelTrimPercent)},")
+            sb.append("${String.format(java.util.Locale.US, "%.2f", p.widebandO2Afr)},")
+            sb.append("${p.throttlePositionPercent},")
+            sb.append("${String.format(java.util.Locale.US, "%.2f", p.massAirFlowGps)},")
+            sb.append("${p.manifoldAirTempF},")
+            sb.append("${p.desiredIdleRpm},")
+            sb.append("${p.iacPositionSteps},")
+            sb.append("${String.format(java.util.Locale.US, "%.2f", p.dwellTimeMs)},")
+            sb.append("${String.format(java.util.Locale.US, "%.2f", p.knockRetardDegrees)},")
+            sb.append("${p.knockCount},")
+            sb.append("${String.format(java.util.Locale.US, "%.3f", p.commandedEquivalenceRatio)}\n")
+        }
+        return sb.toString()
+    }
+
     // Manual command console inputs
     private val _commandLineInput = MutableStateFlow("")
     val commandLineInput: StateFlow<String> = _commandLineInput
@@ -147,7 +176,7 @@ class TunerViewModel(application: Application) : AndroidViewModel(application) {
                         val coolant = 180 + (i / 10)
                          val sparkTiming = if (rpm > 4000) 29.5f else 18.0f + Random.nextFloat() * 4
                          val isPe = rpm > 3800 // Power Enrichment mode
-                         val simulatedMaf = (rpm.toFloat() / 6000f) * 180f + 10f + (Random.nextFloat() * 5f)
+                         val computedMaf = (rpm.toFloat() / 6000f) * 180f + 10f + (Random.nextFloat() * 5f)
                          val kr = if (rpm > 4500 && Random.nextFloat() > 0.7f) 1.5f + Random.nextFloat() * 2.0f else 0.0f
                          points.add(
                              LogDataPoint(
@@ -161,7 +190,7 @@ class TunerViewModel(application: Application) : AndroidViewModel(application) {
                                  shortTermFuelTrimPercent = -1.5f + Random.nextFloat() * 3,
                                  widebandO2Afr = if (isPe) 12.5f + Random.nextFloat() * 0.3f else 14.7f + Random.nextFloat() * 0.2f,
                                  throttlePositionPercent = if (rpm > 4500) 100 else 15 + (rpm / 80),
-                                 massAirFlowGps = simulatedMaf,
+                                 massAirFlowGps = computedMaf,
                                  manifoldAirTempF = 95 + (rpm / 1000),
                                  desiredIdleRpm = 650,
                                  iacPositionSteps = if (rpm < 1000) 55 else 35 + (rpm / 200),
@@ -192,6 +221,7 @@ class TunerViewModel(application: Application) : AndroidViewModel(application) {
                 if (point != null && _currentActiveSessionId.value != null) {
                     val timestampedPoint = point.copy(sessionId = _currentActiveSessionId.value!!)
                     activeSessionPointsList.add(timestampedPoint)
+                    _currentLiveSessionPoints.value = _currentLiveSessionPoints.value + timestampedPoint
 
                     // Write to DB periodically in blocks of 20 points
                     if (activeSessionPointsList.size >= 25) {
@@ -430,7 +460,25 @@ class TunerViewModel(application: Application) : AndroidViewModel(application) {
                     obdxManager.emitTerminalLog("Local backup of tuning parameters saved: '$backupName' (ID: $backupId)")
                 }
             }
-            obdxManager.executePlatformFlash(operation, useHighSpeed)
+            val currentCal = _selectedCal.value
+            val binaryToFlash = if (currentCal != null && operation.contains("Write")) {
+                val fixedCal = patcherEngine.recalculateChecksums(currentCal)
+                com.example.engine.P59BinaryParser.createStandardP59Binary(
+                    osId = fixedCal.operatingSystem,
+                    vatsEnabled = fixedCal.vatsEnabled,
+                    flexFuelEnabled = fixedCal.flexFuelEnabled,
+                    mapSensorBarType = fixedCal.mapSensorBarType,
+                    targetIdleRpm = fixedCal.targetIdleRpm,
+                    sparkMaxAdvance = fixedCal.sparkMaxAdvance,
+                    leanCruiseEnabled = fixedCal.leanCruiseEnabled,
+                    injectorFlowRateLbHr = fixedCal.injectorFlowRateLbHr,
+                    revLimitRpm = fixedCal.revLimitRpm,
+                    fan1OnTempF = fixedCal.fan1OnTempF,
+                    fan2OnTempF = fixedCal.fan2OnTempF,
+                    veMultiplierPercent = fixedCal.veMultiplierPercent
+                )
+            } else null
+            obdxManager.executePlatformFlash(operation, useHighSpeed, binaryToFlash)
         }
     }
 
@@ -457,6 +505,7 @@ class TunerViewModel(application: Application) : AndroidViewModel(application) {
             val insertedId = repository.insertSession(newSession).toInt()
             _currentActiveSessionId.value = insertedId
             activeSessionPointsList.clear()
+            _currentLiveSessionPoints.value = emptyList()
 
             // Run scanner in loop mode
             obdxManager.startLogging(insertedId)
@@ -957,13 +1006,13 @@ class TunerViewModel(application: Application) : AndroidViewModel(application) {
                 if (apiKey.isEmpty() || apiKey == "YOUR_GEMINI_API_KEY" || apiKey == "PLACEHOLDER_KEY") {
                     delay(1500)
                     // Fallback to offline heuristic chat reply
-                    val replyText = "I see your query! However, the Gemini API Key is not configured. Here is an offline mock response based on your inputs:\n\n" +
+                    val replyText = "I see your query! However, the Gemini API Key is not configured. Here is an offline calibration analysis response based on your inputs:\n\n" +
                             "**Calibration analyzed:** ${newestCal?.name ?: "None"}\n" +
                             "**Latest Log analyzed:** ${newestLog?.sessionName ?: "None"}\n" +
                             "**Engine mods:** ${if (engineMods.isNotBlank()) engineMods else "None"}\n\n" +
                             "Please add a valid `GEMINI_API_KEY` in the AI Studio Secrets panel to enable real-time calibrations analysis."
                     
-                    val mockSuggestions = if (newestCal != null) {
+                    val localHeuristicSuggestions = if (newestCal != null) {
                         TuningSuggestions(
                             targetIdleRpm = if (engineMods.lowercase().contains("cam")) 800 else newestCal.targetIdleRpm,
                             sparkMaxAdvance = (newestCal.sparkMaxAdvance + 2).coerceIn(24, 40),
@@ -980,7 +1029,7 @@ class TunerViewModel(application: Application) : AndroidViewModel(application) {
                     _chatMessages.value = _chatMessages.value + ChatMessage(
                         sender = MessageSender.GEMINI,
                         text = replyText,
-                        tuningSuggestions = mockSuggestions
+                        tuningSuggestions = localHeuristicSuggestions
                     )
                     return@launch
                 }

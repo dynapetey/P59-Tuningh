@@ -170,7 +170,7 @@ object P59BinaryParser {
 
     /**
      * Generates a fully structure-compliant 1MB standard GM P59 binary calibration file.
-     * Populate standard offsets with realistic parameters to simulate a real physical read.
+     * Populate standard offsets with realistic default calibration parameters.
      */
     fun createStandardP59Binary(
         osId: String = "12587603",

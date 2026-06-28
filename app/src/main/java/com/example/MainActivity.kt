@@ -107,16 +107,6 @@ fun TunerDashboardScreen(
             .fillMaxSize()
             .background(DarkGreyBackground)
     ) {
-        // --- High-Performance System Status Bar Header ---
-        OBDXStatusHeader(
-            obdxState = obdxState,
-            voltage = voltage,
-            speedMode = speedMode,
-            onConnect = { viewModel.obdxManager.connectDevice() },
-            onDisconnect = { viewModel.obdxManager.disconnectDevice() },
-            onOpenSettings = { viewModel.selectTab(4) }
-        )
-
         // --- Custom Design Tab Selector (Flasher / Logger / Patcher) ---
         TuningTabRow(
             activeTab = activeTab,
@@ -1219,6 +1209,90 @@ fun convertLogPointsToCsv(points: List<LogDataPoint>): String {
 }
 
 // ==========================================
+// SHARED LIVE LOG CSV EXPORTER BUTTON
+// ==========================================
+@Composable
+fun LiveExportCsvButton(
+    viewModel: TunerViewModel,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val currentLiveSessionPoints by viewModel.currentLiveSessionPoints.collectAsState()
+    var showExportMenu by remember { mutableStateOf(false) }
+
+    if (currentLiveSessionPoints.isNotEmpty()) {
+        Box(modifier = modifier) {
+            Button(
+                onClick = { showExportMenu = true },
+                colors = ButtonDefaults.buttonColors(containerColor = GlowingBlue.copy(alpha = 0.15f)),
+                border = BorderStroke(1.dp, GlowingBlue),
+                shape = RoundedCornerShape(6.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.height(34.dp).testTag("export_live_csv_btn")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Share, 
+                    contentDescription = "Export Live CSV", 
+                    modifier = Modifier.size(12.dp), 
+                    tint = Color.White
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("EXPORT CSV", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+            }
+            
+            DropdownMenu(
+                expanded = showExportMenu,
+                onDismissRequest = { showExportMenu = false },
+                modifier = Modifier
+                    .background(CardSurfaceColor)
+                    .border(1.dp, BorderGrey)
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Copy CSV to Clipboard", color = Color.White, fontSize = 11.sp) },
+                    leadingIcon = { 
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle, 
+                            contentDescription = "Copy", 
+                            tint = NeonGreen, 
+                            modifier = Modifier.size(16.dp)
+                        ) 
+                    },
+                    onClick = {
+                        showExportMenu = false
+                        val csv = viewModel.getCsvData(currentLiveSessionPoints)
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        val clip = android.content.ClipData.newPlainText("P59 Live Engine Log CSV", csv)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "Live CSV copied to clipboard!", Toast.LENGTH_SHORT).show()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Share CSV File", color = Color.White, fontSize = 11.sp) },
+                    leadingIcon = { 
+                        Icon(
+                            imageVector = Icons.Default.Share, 
+                            contentDescription = "Share", 
+                            tint = GlowingBlue, 
+                            modifier = Modifier.size(16.dp)
+                        ) 
+                    },
+                    onClick = {
+                        showExportMenu = false
+                        val csv = viewModel.getCsvData(currentLiveSessionPoints)
+                        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(android.content.Intent.EXTRA_SUBJECT, "P59 Live Engine Log")
+                            putExtra(android.content.Intent.EXTRA_TEXT, csv)
+                        }
+                        context.startActivity(android.content.Intent.createChooser(intent, "Share Live Log CSV"))
+                    }
+                )
+            }
+        }
+    }
+}
+
+// ==========================================
 // 2. LOGGER TAB CONTENT (PCM Logger style)
 // ==========================================
 @Composable
@@ -1370,34 +1444,41 @@ fun LoggerTabContent(viewModel: TunerViewModel) {
                             )
                         }
 
-                        if (activeSessionId == null) {
-                            Button(
-                                onClick = { viewModel.startLoggingSession() },
-                                colors = ButtonDefaults.buttonColors(containerColor = WarningRed),
-                                shape = RoundedCornerShape(6.dp),
-                                enabled = connectionState != ConnectionState.DISCONNECTED,
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                                modifier = Modifier
-                                    .height(34.dp)
-                                    .testTag("start_logger_btn")
-                            ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = "Record", modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("START LOG", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        } else {
-                            Button(
-                                onClick = { viewModel.stopLoggingSession() },
-                                colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
-                                shape = RoundedCornerShape(6.dp),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                                modifier = Modifier
-                                    .height(34.dp)
-                                    .testTag("stop_logger_btn")
-                            ) {
-                                Icon(Icons.Default.Close, contentDescription = "Stop", modifier = Modifier.size(14.dp), tint = Color.Black)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("STOP LOG", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            LiveExportCsvButton(viewModel = viewModel)
+
+                            if (activeSessionId == null) {
+                                Button(
+                                    onClick = { viewModel.startLoggingSession() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = WarningRed),
+                                    shape = RoundedCornerShape(6.dp),
+                                    enabled = connectionState != ConnectionState.DISCONNECTED,
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                    modifier = Modifier
+                                        .height(34.dp)
+                                        .testTag("start_logger_btn")
+                                ) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = "Record", modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("START LOG", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            } else {
+                                Button(
+                                    onClick = { viewModel.stopLoggingSession() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                    modifier = Modifier
+                                        .height(34.dp)
+                                        .testTag("stop_logger_btn")
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = "Stop", modifier = Modifier.size(14.dp), tint = Color.Black)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("STOP LOG", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
@@ -1732,32 +1813,39 @@ fun LoggerTabContent(viewModel: TunerViewModel) {
                             )
                         }
 
-                        if (activeSessionId == null) {
-                            Button(
-                                onClick = { viewModel.startLoggingSession() },
-                                colors = ButtonDefaults.buttonColors(containerColor = WarningRed),
-                                shape = RoundedCornerShape(6.dp),
-                                enabled = connectionState != ConnectionState.DISCONNECTED,
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                                modifier = Modifier
-                                    .height(34.dp)
-                            ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = "Record", modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("START LOG", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        } else {
-                            Button(
-                                onClick = { viewModel.stopLoggingSession() },
-                                colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
-                                shape = RoundedCornerShape(6.dp),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                                modifier = Modifier
-                                    .height(34.dp)
-                            ) {
-                                Icon(Icons.Default.Close, contentDescription = "Stop", modifier = Modifier.size(14.dp), tint = Color.Black)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("STOP LOG", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            LiveExportCsvButton(viewModel = viewModel)
+
+                            if (activeSessionId == null) {
+                                Button(
+                                    onClick = { viewModel.startLoggingSession() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = WarningRed),
+                                    shape = RoundedCornerShape(6.dp),
+                                    enabled = connectionState != ConnectionState.DISCONNECTED,
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                    modifier = Modifier
+                                        .height(34.dp)
+                                ) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = "Record", modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("START LOG", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            } else {
+                                Button(
+                                    onClick = { viewModel.stopLoggingSession() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                    modifier = Modifier
+                                        .height(34.dp)
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = "Stop", modifier = Modifier.size(14.dp), tint = Color.Black)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("STOP LOG", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
