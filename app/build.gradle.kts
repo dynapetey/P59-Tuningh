@@ -24,7 +24,7 @@ android {
         val envFile = project.rootProject.file(".env")
         var geminiKey = ""
         if (envFile.exists()) {
-            envFile.readLines().forEach { line ->
+            for (line in envFile.readLines()) {
                 val trimmed = line.trim()
                 if (trimmed.startsWith("GEMINI_API_KEY=")) {
                     geminiKey = trimmed.substringAfter("GEMINI_API_KEY=").trim()
@@ -55,7 +55,7 @@ android {
         buildConfig = true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
+        kotlinCompilerExtensionVersion = "1.5.14"
     }
     packaging {
         resources {
