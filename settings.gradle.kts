@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "OBDXProTuner"
 include(":app")
+include(":windowsApp")

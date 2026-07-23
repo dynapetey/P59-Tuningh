@@ -1,0 +1,51 @@
+name: Build Windows Runtime
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "windowsApp/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - ".github/workflows/build-windows-runtime.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-runtime:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle 8.6
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.6"
+
+      - name: Compile and stage Windows application
+        shell: pwsh
+        run: gradle :windowsApp:clean :windowsApp:installDist
+
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: choco install wixtoolset --no-progress -y
+
+      - name: Build EXE and MSI
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File windowsApp/package-windows.ps1
+
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: P59-Tuner-Windows
+          path: dist/windows/*
+          if-no-files-found: error

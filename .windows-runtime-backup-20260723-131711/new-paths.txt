@@ -1,0 +1,4 @@
+windowsApp
+.github/workflows/build-windows-runtime.yml
+LICENSES/PCM_HAMMER_GPL-3.0.txt
+THIRD_PARTY_NOTICES_WINDOWS.md

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.p59.windows.ElmLiveDataClientTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-07-23T13:20:32.727Z" hostname="codespaces-ce3555" time="0.248">
+  <properties/>
+  <testcase name="simulatedElmSession()" classname="com.p59.windows.ElmLiveDataClientTest" time="0.23"/>
+  <system-out><![CDATA[ELM_WINDOWS_SIMULATION_PASS
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
