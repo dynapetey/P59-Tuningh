@@ -1,4 +1,4 @@
-# P59-Tuningh
+# P59-Tuning
 
 A modern open-source tuning utility for **GM P59 PCM (Powertrain Control Module)** calibration, analysis, and workflow improvements.
 
