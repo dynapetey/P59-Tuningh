@@ -1,21 +1,69 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# P59-Tuningh
 
-# Run and deploy your AI Studio app
+A modern open-source tuning utility for **GM P59 PCM (Powertrain Control Module)** calibration, analysis, and workflow improvements.
 
-This contains everything you need to run your app locally.
+> **Status:** Active Development
 
-View your app in AI Studio: https://ai.studio/apps/e36eb3ee-f4b8-4647-b966-e4802cda1e41
+---
 
-## Run Locally
+## Features
 
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
+- 📊 View and edit P59 calibration data
+- 🔍 Search and organize calibration tables
+- ⚡ Fast navigation between tuning parameters
+- 📈 Log analysis support
+- 🎯 Tuned specifically for GM LS-based P59 applications
+- 🖥️ Modern user interface
+- 🔧 Built to complement HP Tuners workflows
 
+---
 
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
+## Supported Vehicles
+
+Examples include many GM trucks and SUVs equipped with the P59 PCM, such as:
+
+- Chevrolet Silverado
+- GMC Sierra
+- Chevrolet Tahoe
+- GMC Yukon
+- Chevrolet Suburban
+- Cadillac Escalade
+- Other compatible P59-equipped vehicles
+
+> Always verify OS compatibility before flashing any calibration.
+
+---
+
+## Goals
+
+This project aims to make P59 tuning easier by providing:
+
+- Cleaner organization of calibration data
+- Improved table navigation
+- Better visualization of tuning changes
+- Expanded parameter support
+- Community-driven improvements
+
+---
+
+## Planned Features
+
+- [ ] Compare two tune files
+- [ ] Table history
+- [ ] Dark mode
+- [ ] Advanced search
+- [ ] Wideband AFR tools
+- [ ] VE and MAF tuning utilities
+- [ ] Idle tuning assistant
+- [ ] Spark analysis
+- [ ] Fueling calculators
+- [ ] Export/import calibration data
+
+---
+
+## Building
+
+Clone the repository:
+
+```bash
+git clone https://github.com/dynapetey/P59-Tuningh.git
