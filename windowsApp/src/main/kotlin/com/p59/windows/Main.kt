@@ -178,6 +178,7 @@ private class P59WindowsApp {
             font = Font(Font.SANS_SERIF, Font.BOLD, 13)
             addTab("LINK", createConnectionPanel())
             addTab("LIVE", createLiveDataPanel())
+            addTab("TUNE", createTunePanel())
             addTab("FLASH", createFlasherPanel())
             addTab("FAULTS", createDiagnosticsPanel())
             addTab("SYSTEM", createAboutPanel())
@@ -344,6 +345,105 @@ private class P59WindowsApp {
                 font = Font(Font.SANS_SERIF, Font.BOLD, 11)
             }, BorderLayout.SOUTH)
         }
+
+    private fun createTunePanel(): JPanel =
+        panelWithPadding().apply {
+            layout = GridLayout(2, 2, 12, 12)
+
+            add(tuningCard("WIDEBAND AFR", "Calculate correction from target and measured AFR.") { form, result ->
+                val target = tuningField(form, "Target AFR", "12.80")
+                val measured = tuningField(form, "Measured AFR", "13.44")
+                val current = tuningField(form, "Current value", "100.0")
+                tuningAction(form, "CALCULATE") {
+                    val correction = TuningUtilities.fuelCorrection(number(target), number(measured), number(current))
+                    result.text = "<html><b>${signed(correction.percent)}% fuel</b><br>Multiplier ${decimal(correction.multiplier)}<br>Corrected value ${decimal(correction.correctedValue)}</html>"
+                }
+            })
+
+            add(tuningCard("VE + MAF SCALING", "Apply the same wideband error model to a VE cell or MAF value.") { form, result ->
+                val target = tuningField(form, "Commanded AFR", "12.80")
+                val measured = tuningField(form, "Wideband AFR", "12.16")
+                val tableValue = tuningField(form, "VE / MAF value", "85.0")
+                tuningAction(form, "SCALE VALUE") {
+                    val correction = TuningUtilities.fuelCorrection(number(target), number(measured), number(tableValue))
+                    result.text = "<html><b>${signed(correction.percent)}%</b><br>New table value ${decimal(correction.correctedValue)}<br>Apply only to cells represented by the log.</html>"
+                }
+            })
+
+            add(tuningCard("IDLE ASSISTANT", "Estimate a conservative base-airflow change from steady RPM error.") { form, result ->
+                val target = tuningField(form, "Target RPM", "750")
+                val measured = tuningField(form, "Measured RPM", "650")
+                val airflow = tuningField(form, "Current airflow", "8.0")
+                tuningAction(form, "ANALYZE IDLE") {
+                    val recommendation = TuningUtilities.idleRecommendation(number(target).toInt(), number(measured).toInt(), number(airflow))
+                    result.text = if (recommendation.stable) {
+                        "<html><b>HOLD</b><br>Idle is within 25 RPM of target.</html>"
+                    } else {
+                        "<html><b>${signed(recommendation.airflowPercent)}% airflow</b><br>Suggested value ${decimal(recommendation.correctedAirflow)}<br>RPM error ${recommendation.rpmError}</html>"
+                    }
+                }
+            })
+
+            add(tuningCard("SPARK ANALYSIS", "Review knock and fueling before changing high-load timing.") { form, result ->
+                val timing = tuningField(form, "Current timing °", "24.0")
+                val knock = tuningField(form, "Knock retard °", "2.0")
+                val afr = tuningField(form, "Wideband AFR", "12.70")
+                tuningAction(form, "ANALYZE SPARK") {
+                    val recommendation = TuningUtilities.sparkRecommendation(number(timing), number(knock), number(afr))
+                    result.text = "<html><b>${signed(recommendation.timingChange)}° timing</b><br>Suggested ${decimal(recommendation.recommendedTiming)}°<br>${recommendation.message}</html>"
+                }
+            })
+        }
+
+    private fun tuningCard(
+        title: String,
+        description: String,
+        populate: (JPanel, JLabel) -> Unit
+    ): JPanel = JPanel(BorderLayout(8, 8)).apply {
+        background = Surface
+        border = BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(1, 4, 1, 1, Border),
+            BorderFactory.createEmptyBorder(14, 16, 14, 16)
+        )
+        val form = JPanel(GridLayout(0, 2, 8, 8)).apply { background = Surface }
+        val result = JLabel("Enter values and run analysis.").apply {
+            foreground = TextSecondary
+            verticalAlignment = JLabel.TOP
+        }
+        add(JPanel().apply {
+            background = Surface
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            add(JLabel(title).apply { foreground = Accent; font = Font(Font.SANS_SERIF, Font.BOLD or Font.ITALIC, 17) })
+            add(JLabel(description).apply { foreground = TextSecondary; font = Font(Font.SANS_SERIF, Font.PLAIN, 12) })
+        }, BorderLayout.NORTH)
+        populate(form, result)
+        add(form, BorderLayout.CENTER)
+        add(result, BorderLayout.SOUTH)
+    }
+
+    private fun tuningField(form: JPanel, title: String, initial: String): JTextField =
+        JTextField(initial, 8).also { field ->
+            field.background = Background
+            field.foreground = TextPrimary
+            field.caretColor = Accent
+            form.add(JLabel(title).apply { foreground = TextSecondary })
+            form.add(field)
+        }
+
+    private fun tuningAction(form: JPanel, title: String, action: () -> Unit) {
+        form.add(JLabel())
+        form.add(JButton(title).apply {
+            styleButton(this, Accent)
+            addActionListener {
+                try { action() } catch (_: NumberFormatException) { showError("Enter a number in every field.") }
+                catch (error: IllegalArgumentException) { showError(error.message ?: "Invalid tuning input.") }
+            }
+        })
+    }
+
+    private fun number(field: JTextField): Double = field.text.trim().toDouble()
+    private fun decimal(value: Double): String = "%.3f".format(value)
+    private fun signed(value: Double): String = "%+.1f".format(value)
 
     private fun createFlasherPanel(): JPanel =
         panelWithPadding().apply {
