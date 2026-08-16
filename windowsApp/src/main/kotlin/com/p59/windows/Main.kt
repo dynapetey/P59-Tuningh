@@ -47,7 +47,7 @@ private val Accent = Color(0x00, 0xD1, 0xFF)
 private val Success = Color(0x00, 0xD8, 0x7A)
 private val Warning = Color(0xFF, 0xA3, 0x1A)
 private val ErrorColor = Color(0xFF, 0x55, 0x66)
-private val platformName =
+internal val platformName =
     if (System.getProperty("os.name").startsWith("Linux", ignoreCase = true)) "Linux" else "Windows"
 
 fun main() {
@@ -65,8 +65,10 @@ private class P59WindowsApp {
     private val frame = JFrame("OBDX Pro P59 Tuner — $platformName")
     private val executor = Executors.newCachedThreadPool()
     private val serial = SerialConnection()
+    private val pcmHammer = PcmHammerBackend(::log)
     private val ioLock = Any()
     private val liveRunning = AtomicBoolean(false)
+    private val writeRunning = AtomicBoolean(false)
 
     @Volatile
     private var elmClient: ElmLiveDataClient? = null
@@ -125,7 +127,10 @@ private class P59WindowsApp {
         refreshPorts()
         updateConnectedUi(false)
         log("$platformName runtime initialized.")
-        log("PCM write operations are safety-locked; verified read and live data are available.")
+        log(
+            if (pcmHammer.isAvailable) "Official PCM Hammer write backend detected."
+            else "PCM writing requires the official PCM Hammer CLI backend."
+        )
         frame.isVisible = true
     }
 
@@ -216,9 +221,14 @@ private class P59WindowsApp {
         readDtcButton.addActionListener { readDtcs() }
         clearDtcButton.addActionListener { clearDtcs() }
         readPcmButton.addActionListener { readPcm() }
+        writeFullButton.addActionListener { writeFullPcm() }
 
         frame.addWindowListener(object : WindowAdapter() {
             override fun windowClosing(event: WindowEvent?) {
+                if (writeRunning.get()) {
+                    showError("PCM Hammer is writing. Do not close the application or power off the PCM.")
+                    return
+                }
                 stopLiveLogging()
                 serial.close()
                 executor.shutdownNow()
@@ -316,11 +326,11 @@ private class P59WindowsApp {
             )
 
             writeCalibrationButton.isEnabled = false
-            writeFullButton.isEnabled = false
+            writeFullButton.isEnabled = pcmHammer.isAvailable
             writeCalibrationButton.toolTipText =
                 "Disabled until the complete erase/program/recovery verifier is hardware-certified."
             writeFullButton.toolTipText =
-                "Disabled until the complete erase/program/recovery verifier is hardware-certified."
+                "Uses the official PCM Hammer engine after a non-destructive test write."
 
             add(Box.createVerticalStrut(16))
             add(readProgress.apply {
@@ -340,8 +350,8 @@ private class P59WindowsApp {
             add(Box.createVerticalStrut(14))
             add(
                 infoCard(
-                    "Write safety lock",
-                    "$platformName compatibility does not enable PCM writing. A native desktop package is not evidence that erase, programming, voltage interlocks, retries, and recovery behavior are safe on physical hardware."
+                    "Official PCM Hammer backend",
+                    "Full writes use the official PCM Hammer engine, including its image checks, flash-chip detection, erase/program retries, range CRC verification, and recovery behavior. A non-destructive test write runs first. Calibration-only writing remains disabled because the official CLI does not expose that operation."
                 )
             )
         }
@@ -625,6 +635,118 @@ private class P59WindowsApp {
         }
     }
 
+    private fun writeFullPcm() {
+        val selectedPort = (portCombo.selectedItem as? SerialPortInfo)?.systemName
+        val client = elmClient
+        if (!serial.isOpen || selectedPort == null || client == null) {
+            showError("Connect to the OBDX Pro first.")
+            return
+        }
+        if (!pcmHammer.isAvailable) {
+            showError("Official PCM Hammer CLI not found. Set PCM_HAMMER_CLI or use the packaged runtime.")
+            return
+        }
+
+        val chooser = JFileChooser().apply {
+            dialogTitle = "Select complete P59 image for full write"
+            fileFilter = FileNameExtensionFilter("P59 binary image (*.bin)", "bin")
+        }
+        if (chooser.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) return
+        val image = chooser.selectedFile
+        if (!image.isFile || image.length() != 1024L * 1024L) {
+            showError("A full P59 write requires an exact 1 MiB (1,048,576 byte) image.")
+            return
+        }
+
+        val voltage = try {
+            client.readVoltage()
+        } catch (_: Throwable) {
+            null
+        }
+        if (voltage == null || voltage < 12.0f) {
+            showError("Full write blocked: adapter voltage must be readable and at least 12.0 V. Use a stable power supply.")
+            return
+        }
+
+        val confirmation = JOptionPane.showInputDialog(
+            frame,
+            "This will erase and rewrite the complete PCM using PCM Hammer.\n" +
+                "Maintain stable power and do not disconnect the interface.\n\n" +
+                "Type WRITE FULL PCM to begin the required test write:",
+            "Destructive operation",
+            JOptionPane.WARNING_MESSAGE
+        )
+        if (confirmation != "WRITE FULL PCM") return
+
+        stopLiveLogging()
+        elmClient = null
+        serial.close()
+        updateConnectedUi(false)
+        writeFullButton.isEnabled = false
+        readStatus.text = "Running PCM Hammer test write..."
+        writeRunning.set(true)
+
+        executor.submit {
+            try {
+                val test = pcmHammer.testWrite(image, selectedPort)
+                if (test.exitCode != 0) {
+                    error("PCM Hammer test write failed. No erase was requested.")
+                }
+
+                val approved = confirmOnUi(
+                    "PCM Hammer test write passed.\n\nProceed with the destructive full write now?",
+                    "Final write confirmation"
+                )
+                if (!approved) {
+                    log("[PCM HAMMER] Full write cancelled after successful test write.")
+                    return@submit
+                }
+
+                onUi { readStatus.text = "PCM Hammer full write in progress — do not power off" }
+                val result = pcmHammer.write(image, selectedPort)
+                if (result.exitCode != 0) {
+                    error("PCM Hammer reported that the full write did not complete successfully. Do not power off the PCM; review the log and retry through PCM Hammer.")
+                }
+                onUi {
+                    readStatus.text = "Full write verified"
+                    JOptionPane.showMessageDialog(
+                        frame,
+                        "PCM Hammer completed and verified the full write.",
+                        "PCM write complete",
+                        JOptionPane.INFORMATION_MESSAGE
+                    )
+                }
+            } catch (error: Throwable) {
+                log("[PCM HAMMER ERROR] ${error.message ?: error.javaClass.simpleName}")
+                onUi {
+                    readStatus.text = "PCM Hammer write stopped"
+                    showError(error.message ?: "PCM Hammer write failed.")
+                }
+            } finally {
+                writeRunning.set(false)
+                onUi {
+                    refreshPorts()
+                    writeFullButton.isEnabled = false
+                }
+            }
+        }
+    }
+
+    private fun confirmOnUi(message: String, title: String): Boolean {
+        if (SwingUtilities.isEventDispatchThread()) {
+            return JOptionPane.showConfirmDialog(
+                frame, message, title, JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE
+            ) == JOptionPane.YES_OPTION
+        }
+        var approved = false
+        SwingUtilities.invokeAndWait {
+            approved = JOptionPane.showConfirmDialog(
+                frame, message, title, JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE
+            ) == JOptionPane.YES_OPTION
+        }
+        return approved
+    }
+
     private fun readDtcs() {
         val client = elmClient ?: run {
             showError("Connect to the OBDX Pro first.")
@@ -719,6 +841,7 @@ private class P59WindowsApp {
         readPcmButton.isEnabled = connected
         readDtcButton.isEnabled = connected
         clearDtcButton.isEnabled = connected
+        writeFullButton.isEnabled = connected && pcmHammer.isAvailable
     }
 
     private fun updateBusy(message: String) {

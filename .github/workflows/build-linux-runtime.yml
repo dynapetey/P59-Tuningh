@@ -6,6 +6,7 @@ on:
     paths:
       - "windowsApp/**"
       - "package-linux.sh"
+      - "build-pcmhammer-linux.sh"
       - "build.gradle.kts"
       - "settings.gradle.kts"
       - ".github/workflows/build-linux-runtime.yml"
@@ -13,6 +14,7 @@ on:
     paths:
       - "windowsApp/**"
       - "package-linux.sh"
+      - "build-pcmhammer-linux.sh"
       - "build.gradle.kts"
       - "settings.gradle.kts"
       - ".github/workflows/build-linux-runtime.yml"
@@ -33,6 +35,11 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
 
       - name: Build and test Linux runtime
         run: ./package-linux.sh

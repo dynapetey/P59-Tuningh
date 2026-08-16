@@ -10,9 +10,10 @@ This module is the JVM desktop runtime for the OBDX Pro P59 Tuner. It supports W
 - Live RPM, speed, MAP, coolant, TPS, MAF, spark, trims, commanded EQ, IAT, battery voltage, and A/C-input wideband data
 - Wideband conversion: `AFR = (A/C input voltage / 0.5) + 9.37`
 - Read and clear diagnostic trouble codes
-- Read-only, verified 1 MiB P59 extraction through OBDX DVI and the official P01/P59 PCM Hammer kernel
+- Verified 1 MiB P59 extraction through OBDX DVI and the official P01/P59 PCM Hammer kernel
+- Full-image test-write and write through the pinned official PCM Hammer CLI backend
 
-PCM writing remains disabled.
+Calibration-only writing remains disabled because the official PCM Hammer CLI does not expose it. Full writing requires a connected OBDX Pro, an exact 1 MiB image, at least 12.0 V, a typed confirmation, a successful non-destructive test write, and a final confirmation.
 
 ## Run from source
 
@@ -52,12 +53,14 @@ Installers must be produced on Windows. The included GitHub Actions workflow use
 
 ## Build the Linux runtime
 
-On an x64 Linux host with JDK 17 (including `jpackage`) installed:
+On an x64 Linux host with JDK 17 (including `jpackage`) and .NET SDK 10 installed:
 
 ```bash
 ./package-linux.sh
 ```
 
-The script runs the desktop tests and creates a self-contained application image, including a Java runtime, at `dist/linux/P59Tuner-linux-x64.tar.gz`. Extract it and launch `P59Tuner/bin/P59Tuner`.
+The script builds a pinned revision of the official PCM Hammer CLI, runs the desktop tests, and creates a self-contained application image containing both Java and .NET runtimes at `dist/linux/P59Tuner-linux-x64.tar.gz`. Extract it and launch `P59Tuner/bin/P59Tuner`.
+
+For source runs, set `PCM_HAMMER_CLI` to the absolute path of an official `pcmhammer-cli` executable. Packaged Linux builds discover their bundled backend automatically.
 
 Linux users need read/write permission for the OBDX Pro serial device (commonly `/dev/ttyUSB0` or `/dev/ttyACM0`). On distributions that use the `dialout` group, add the user to that group and sign in again. Distribution-specific udev rules may also be used.

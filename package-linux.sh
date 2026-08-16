@@ -11,6 +11,7 @@ if ! command -v jpackage >/dev/null 2>&1; then
 fi
 
 ./gradlew :windowsApp:clean :windowsApp:test :windowsApp:installDist
+./build-pcmhammer-linux.sh
 
 input_dir="$project_root/windowsApp/build/install/windowsApp/lib"
 main_jar="$(find "$input_dir" -maxdepth 1 -name 'windowsApp-*.jar' -print -quit)"
