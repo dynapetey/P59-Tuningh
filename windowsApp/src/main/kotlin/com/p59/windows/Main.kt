@@ -7,6 +7,7 @@ import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
+import java.awt.GridLayout
 import java.awt.Insets
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
@@ -38,12 +39,12 @@ import javax.swing.WindowConstants
 import javax.swing.filechooser.FileNameExtensionFilter
 import javax.swing.table.DefaultTableModel
 
-private val Background = Color(0x0F, 0x11, 0x15)
-private val Surface = Color(0x1B, 0x1E, 0x24)
-private val Border = Color(0x2C, 0x31, 0x3C)
-private val TextPrimary = Color(0xF2, 0xF5, 0xF7)
-private val TextSecondary = Color(0xAC, 0xB3, 0xBF)
-private val Accent = Color(0x00, 0xD1, 0xFF)
+private val Background = Color(0x0B, 0x0B, 0x0C)
+private val Surface = Color(0x15, 0x12, 0x11)
+private val Border = Color(0x39, 0x2A, 0x24)
+private val TextPrimary = Color(0xF7, 0xF4, 0xF1)
+private val TextSecondary = Color(0xB8, 0xA9, 0xA2)
+private val Accent = Color(0xFF, 0x63, 0x2F)
 private val Success = Color(0x00, 0xD8, 0x7A)
 private val Warning = Color(0xFF, 0xA3, 0x1A)
 private val ErrorColor = Color(0xFF, 0x55, 0x66)
@@ -121,6 +122,12 @@ private class P59WindowsApp {
     private val telemetryTable = object : JTable(telemetryModel) {
         override fun isCellEditable(row: Int, column: Int): Boolean = false
     }
+    private val telemetryValueLabels = Array(14) {
+        JLabel("—").apply {
+            foreground = TextPrimary
+            font = Font(Font.SANS_SERIF, Font.BOLD, 27)
+        }
+    }
 
     fun show() {
         configureFrame()
@@ -149,9 +156,9 @@ private class P59WindowsApp {
                 BorderFactory.createEmptyBorder(12, 16, 12, 16)
             )
             add(
-                JLabel("OBDX PRO P59 TUNER").apply {
+                JLabel("P59 // RACE OPS").apply {
                     foreground = TextPrimary
-                    font = Font(Font.SANS_SERIF, Font.BOLD, 20)
+                    font = Font(Font.SANS_SERIF, Font.BOLD or Font.ITALIC, 21)
                 },
                 BorderLayout.WEST
             )
@@ -165,14 +172,15 @@ private class P59WindowsApp {
             )
         }
 
-        val tabs = JTabbedPane().apply {
+        val tabs = JTabbedPane(JTabbedPane.LEFT).apply {
             background = Background
             foreground = TextPrimary
-            addTab("Connection", createConnectionPanel())
-            addTab("Live Data", createLiveDataPanel())
-            addTab("Flasher", createFlasherPanel())
-            addTab("Diagnostics", createDiagnosticsPanel())
-            addTab("About", createAboutPanel())
+            font = Font(Font.SANS_SERIF, Font.BOLD, 13)
+            addTab("LINK", createConnectionPanel())
+            addTab("LIVE", createLiveDataPanel())
+            addTab("FLASH", createFlasherPanel())
+            addTab("FAULTS", createDiagnosticsPanel())
+            addTab("SYSTEM", createAboutPanel())
         }
 
         terminal.apply {
@@ -281,26 +289,60 @@ private class P59WindowsApp {
             layout = BorderLayout(8, 8)
 
             add(
-                JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+                JPanel(BorderLayout()).apply {
                     background = Background
-                    add(startLoggingButton)
-                    add(stopLoggingButton)
+                    add(JLabel("LIVE SESSION").apply {
+                        foreground = TextPrimary
+                        font = Font(Font.SANS_SERIF, Font.BOLD or Font.ITALIC, 24)
+                    }, BorderLayout.WEST)
+                    add(JPanel(FlowLayout(FlowLayout.RIGHT, 8, 0)).apply {
+                        background = Background
+                        add(startLoggingButton)
+                        add(stopLoggingButton)
+                    }, BorderLayout.EAST)
                 },
                 BorderLayout.NORTH
             )
 
-            telemetryTable.apply {
-                background = Surface
-                foreground = TextPrimary
-                gridColor = Border
-                selectionBackground = Color(0x14, 0x4D, 0x63)
-                selectionForeground = TextPrimary
-                rowHeight = 28
-                tableHeader.background = Color(0x22, 0x27, 0x30)
-                tableHeader.foreground = TextPrimary
+            val names = arrayOf(
+                "RPM", "VEHICLE SPEED", "MAP", "COOLANT", "THROTTLE", "MAF",
+                "SPARK", "STFT", "LTFT", "COMMANDED EQ", "INTAKE AIR",
+                "A/C INPUT", "WIDEBAND AFR", "ADAPTER VOLTAGE"
+            )
+            val units = arrayOf(
+                "rpm", "mph", "kPa", "°F", "%", "g/s", "degrees", "%", "%",
+                "EQ", "°F", "V", "AFR", "V"
+            )
+            val tileGrid = JPanel(GridLayout(0, 3, 10, 10)).apply {
+                background = Background
+                border = BorderFactory.createEmptyBorder(14, 0, 4, 0)
+                names.indices.forEach { index ->
+                    add(telemetryTile(names[index], telemetryValueLabels[index], units[index]))
+                }
             }
+            add(JScrollPane(tileGrid).apply {
+                border = BorderFactory.createEmptyBorder()
+                viewport.background = Background
+                verticalScrollBar.unitIncrement = 16
+            }, BorderLayout.CENTER)
+        }
 
-            add(JScrollPane(telemetryTable), BorderLayout.CENTER)
+    private fun telemetryTile(name: String, value: JLabel, unit: String): JPanel =
+        JPanel(BorderLayout(4, 4)).apply {
+            background = Surface
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(1, 4, 1, 1, Border),
+                BorderFactory.createEmptyBorder(13, 14, 13, 14)
+            )
+            add(JLabel(name).apply {
+                foreground = TextSecondary
+                font = Font(Font.SANS_SERIF, Font.BOLD, 11)
+            }, BorderLayout.NORTH)
+            add(value, BorderLayout.CENTER)
+            add(JLabel(unit).apply {
+                foreground = Accent
+                font = Font(Font.SANS_SERIF, Font.BOLD, 11)
+            }, BorderLayout.SOUTH)
         }
 
     private fun createFlasherPanel(): JPanel =
@@ -827,6 +869,7 @@ private class P59WindowsApp {
     private fun setValue(row: Int, value: String?) {
         if (value != null) {
             telemetryModel.setValueAt(value, row, 1)
+            telemetryValueLabels[row].text = value
         }
     }
 
@@ -934,12 +977,13 @@ private class P59WindowsApp {
     }
 
     private fun styleButton(button: JButton, accent: Color) {
-        button.background = Surface
-        button.foreground = accent
+        button.background = accent
+        button.foreground = TextPrimary
+        button.font = Font(Font.SANS_SERIF, Font.BOLD or Font.ITALIC, 12)
         button.isFocusPainted = false
         button.border = BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(accent),
-            BorderFactory.createEmptyBorder(7, 12, 7, 12)
+            BorderFactory.createMatteBorder(0, 0, 3, 0, accent.darker()),
+            BorderFactory.createEmptyBorder(8, 14, 7, 14)
         )
     }
 
