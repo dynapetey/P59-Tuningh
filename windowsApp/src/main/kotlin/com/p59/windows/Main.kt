@@ -7,6 +7,7 @@ import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
+import java.awt.GridLayout
 import java.awt.Insets
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
@@ -38,15 +39,17 @@ import javax.swing.WindowConstants
 import javax.swing.filechooser.FileNameExtensionFilter
 import javax.swing.table.DefaultTableModel
 
-private val Background = Color(0x0F, 0x11, 0x15)
-private val Surface = Color(0x1B, 0x1E, 0x24)
-private val Border = Color(0x2C, 0x31, 0x3C)
-private val TextPrimary = Color(0xF2, 0xF5, 0xF7)
-private val TextSecondary = Color(0xAC, 0xB3, 0xBF)
-private val Accent = Color(0x00, 0xD1, 0xFF)
+private val Background = Color(0x0B, 0x0B, 0x0C)
+private val Surface = Color(0x15, 0x12, 0x11)
+private val Border = Color(0x39, 0x2A, 0x24)
+private val TextPrimary = Color(0xF7, 0xF4, 0xF1)
+private val TextSecondary = Color(0xB8, 0xA9, 0xA2)
+private val Accent = Color(0xFF, 0x63, 0x2F)
 private val Success = Color(0x00, 0xD8, 0x7A)
 private val Warning = Color(0xFF, 0xA3, 0x1A)
 private val ErrorColor = Color(0xFF, 0x55, 0x66)
+internal val platformName =
+    if (System.getProperty("os.name").startsWith("Linux", ignoreCase = true)) "Linux" else "Windows"
 
 fun main() {
     SwingUtilities.invokeLater {
@@ -60,11 +63,13 @@ fun main() {
 }
 
 private class P59WindowsApp {
-    private val frame = JFrame("OBDX Pro P59 Tuner — Windows")
+    private val frame = JFrame("OBDX Pro P59 Tuner — $platformName")
     private val executor = Executors.newCachedThreadPool()
     private val serial = SerialConnection()
+    private val pcmHammer = PcmHammerBackend(::log)
     private val ioLock = Any()
     private val liveRunning = AtomicBoolean(false)
+    private val writeRunning = AtomicBoolean(false)
 
     @Volatile
     private var elmClient: ElmLiveDataClient? = null
@@ -117,13 +122,22 @@ private class P59WindowsApp {
     private val telemetryTable = object : JTable(telemetryModel) {
         override fun isCellEditable(row: Int, column: Int): Boolean = false
     }
+    private val telemetryValueLabels = Array(14) {
+        JLabel("—").apply {
+            foreground = TextPrimary
+            font = Font(Font.SANS_SERIF, Font.BOLD, 27)
+        }
+    }
 
     fun show() {
         configureFrame()
         refreshPorts()
         updateConnectedUi(false)
-        log("Windows runtime initialized.")
-        log("PCM write operations are safety-locked; verified read and live data are available.")
+        log("$platformName runtime initialized.")
+        log(
+            if (pcmHammer.isAvailable) "Official PCM Hammer write backend detected."
+            else "PCM writing requires the official PCM Hammer CLI backend."
+        )
         frame.isVisible = true
     }
 
@@ -142,9 +156,9 @@ private class P59WindowsApp {
                 BorderFactory.createEmptyBorder(12, 16, 12, 16)
             )
             add(
-                JLabel("OBDX PRO P59 TUNER").apply {
+                JLabel("P59 // RACE OPS").apply {
                     foreground = TextPrimary
-                    font = Font(Font.SANS_SERIF, Font.BOLD, 20)
+                    font = Font(Font.SANS_SERIF, Font.BOLD or Font.ITALIC, 21)
                 },
                 BorderLayout.WEST
             )
@@ -158,14 +172,16 @@ private class P59WindowsApp {
             )
         }
 
-        val tabs = JTabbedPane().apply {
+        val tabs = JTabbedPane(JTabbedPane.LEFT).apply {
             background = Background
             foreground = TextPrimary
-            addTab("Connection", createConnectionPanel())
-            addTab("Live Data", createLiveDataPanel())
-            addTab("Flasher", createFlasherPanel())
-            addTab("Diagnostics", createDiagnosticsPanel())
-            addTab("About", createAboutPanel())
+            font = Font(Font.SANS_SERIF, Font.BOLD, 13)
+            addTab("LINK", createConnectionPanel())
+            addTab("LIVE", createLiveDataPanel())
+            addTab("TUNE", createTunePanel())
+            addTab("FLASH", createFlasherPanel())
+            addTab("FAULTS", createDiagnosticsPanel())
+            addTab("SYSTEM", createAboutPanel())
         }
 
         terminal.apply {
@@ -214,9 +230,14 @@ private class P59WindowsApp {
         readDtcButton.addActionListener { readDtcs() }
         clearDtcButton.addActionListener { clearDtcs() }
         readPcmButton.addActionListener { readPcm() }
+        writeFullButton.addActionListener { writeFullPcm() }
 
         frame.addWindowListener(object : WindowAdapter() {
             override fun windowClosing(event: WindowEvent?) {
+                if (writeRunning.get()) {
+                    showError("PCM Hammer is writing. Do not close the application or power off the PCM.")
+                    return
+                }
                 stopLiveLogging()
                 serial.close()
                 executor.shutdownNow()
@@ -255,9 +276,9 @@ private class P59WindowsApp {
             constraints.anchor = GridBagConstraints.NORTHWEST
             add(
                 infoCard(
-                    "Windows connection path",
-                    "Use the OBDX Pro USB connection or a Bluetooth virtual COM port. " +
-                        "The Windows runtime talks to the adapter through its serial COM interface. " +
+                    "$platformName connection path",
+                    "Use the OBDX Pro USB connection or a Bluetooth virtual serial port. " +
+                        "The desktop runtime talks to the adapter through its serial interface. " +
                         "Close PCM Hammer, terminal programs, and other software that may already have the port open."
                 ),
                 constraints
@@ -269,27 +290,160 @@ private class P59WindowsApp {
             layout = BorderLayout(8, 8)
 
             add(
-                JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+                JPanel(BorderLayout()).apply {
                     background = Background
-                    add(startLoggingButton)
-                    add(stopLoggingButton)
+                    add(JLabel("LIVE SESSION").apply {
+                        foreground = TextPrimary
+                        font = Font(Font.SANS_SERIF, Font.BOLD or Font.ITALIC, 24)
+                    }, BorderLayout.WEST)
+                    add(JPanel(FlowLayout(FlowLayout.RIGHT, 8, 0)).apply {
+                        background = Background
+                        add(startLoggingButton)
+                        add(stopLoggingButton)
+                    }, BorderLayout.EAST)
                 },
                 BorderLayout.NORTH
             )
 
-            telemetryTable.apply {
-                background = Surface
-                foreground = TextPrimary
-                gridColor = Border
-                selectionBackground = Color(0x14, 0x4D, 0x63)
-                selectionForeground = TextPrimary
-                rowHeight = 28
-                tableHeader.background = Color(0x22, 0x27, 0x30)
-                tableHeader.foreground = TextPrimary
+            val names = arrayOf(
+                "RPM", "VEHICLE SPEED", "MAP", "COOLANT", "THROTTLE", "MAF",
+                "SPARK", "STFT", "LTFT", "COMMANDED EQ", "INTAKE AIR",
+                "A/C INPUT", "WIDEBAND AFR", "ADAPTER VOLTAGE"
+            )
+            val units = arrayOf(
+                "rpm", "mph", "kPa", "°F", "%", "g/s", "degrees", "%", "%",
+                "EQ", "°F", "V", "AFR", "V"
+            )
+            val tileGrid = JPanel(GridLayout(0, 3, 10, 10)).apply {
+                background = Background
+                border = BorderFactory.createEmptyBorder(14, 0, 4, 0)
+                names.indices.forEach { index ->
+                    add(telemetryTile(names[index], telemetryValueLabels[index], units[index]))
+                }
             }
-
-            add(JScrollPane(telemetryTable), BorderLayout.CENTER)
+            add(JScrollPane(tileGrid).apply {
+                border = BorderFactory.createEmptyBorder()
+                viewport.background = Background
+                verticalScrollBar.unitIncrement = 16
+            }, BorderLayout.CENTER)
         }
+
+    private fun telemetryTile(name: String, value: JLabel, unit: String): JPanel =
+        JPanel(BorderLayout(4, 4)).apply {
+            background = Surface
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(1, 4, 1, 1, Border),
+                BorderFactory.createEmptyBorder(13, 14, 13, 14)
+            )
+            add(JLabel(name).apply {
+                foreground = TextSecondary
+                font = Font(Font.SANS_SERIF, Font.BOLD, 11)
+            }, BorderLayout.NORTH)
+            add(value, BorderLayout.CENTER)
+            add(JLabel(unit).apply {
+                foreground = Accent
+                font = Font(Font.SANS_SERIF, Font.BOLD, 11)
+            }, BorderLayout.SOUTH)
+        }
+
+    private fun createTunePanel(): JPanel =
+        panelWithPadding().apply {
+            layout = GridLayout(2, 2, 12, 12)
+
+            add(tuningCard("WIDEBAND AFR", "Calculate correction from target and measured AFR.") { form, result ->
+                val target = tuningField(form, "Target AFR", "12.80")
+                val measured = tuningField(form, "Measured AFR", "13.44")
+                val current = tuningField(form, "Current value", "100.0")
+                tuningAction(form, "CALCULATE") {
+                    val correction = TuningUtilities.fuelCorrection(number(target), number(measured), number(current))
+                    result.text = "<html><b>${signed(correction.percent)}% fuel</b><br>Multiplier ${decimal(correction.multiplier)}<br>Corrected value ${decimal(correction.correctedValue)}</html>"
+                }
+            })
+
+            add(tuningCard("VE + MAF SCALING", "Apply the same wideband error model to a VE cell or MAF value.") { form, result ->
+                val target = tuningField(form, "Commanded AFR", "12.80")
+                val measured = tuningField(form, "Wideband AFR", "12.16")
+                val tableValue = tuningField(form, "VE / MAF value", "85.0")
+                tuningAction(form, "SCALE VALUE") {
+                    val correction = TuningUtilities.fuelCorrection(number(target), number(measured), number(tableValue))
+                    result.text = "<html><b>${signed(correction.percent)}%</b><br>New table value ${decimal(correction.correctedValue)}<br>Apply only to cells represented by the log.</html>"
+                }
+            })
+
+            add(tuningCard("IDLE ASSISTANT", "Estimate a conservative base-airflow change from steady RPM error.") { form, result ->
+                val target = tuningField(form, "Target RPM", "750")
+                val measured = tuningField(form, "Measured RPM", "650")
+                val airflow = tuningField(form, "Current airflow", "8.0")
+                tuningAction(form, "ANALYZE IDLE") {
+                    val recommendation = TuningUtilities.idleRecommendation(number(target).toInt(), number(measured).toInt(), number(airflow))
+                    result.text = if (recommendation.stable) {
+                        "<html><b>HOLD</b><br>Idle is within 25 RPM of target.</html>"
+                    } else {
+                        "<html><b>${signed(recommendation.airflowPercent)}% airflow</b><br>Suggested value ${decimal(recommendation.correctedAirflow)}<br>RPM error ${recommendation.rpmError}</html>"
+                    }
+                }
+            })
+
+            add(tuningCard("SPARK ANALYSIS", "Review knock and fueling before changing high-load timing.") { form, result ->
+                val timing = tuningField(form, "Current timing °", "24.0")
+                val knock = tuningField(form, "Knock retard °", "2.0")
+                val afr = tuningField(form, "Wideband AFR", "12.70")
+                tuningAction(form, "ANALYZE SPARK") {
+                    val recommendation = TuningUtilities.sparkRecommendation(number(timing), number(knock), number(afr))
+                    result.text = "<html><b>${signed(recommendation.timingChange)}° timing</b><br>Suggested ${decimal(recommendation.recommendedTiming)}°<br>${recommendation.message}</html>"
+                }
+            })
+        }
+
+    private fun tuningCard(
+        title: String,
+        description: String,
+        populate: (JPanel, JLabel) -> Unit
+    ): JPanel = JPanel(BorderLayout(8, 8)).apply {
+        background = Surface
+        border = BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(1, 4, 1, 1, Border),
+            BorderFactory.createEmptyBorder(14, 16, 14, 16)
+        )
+        val form = JPanel(GridLayout(0, 2, 8, 8)).apply { background = Surface }
+        val result = JLabel("Enter values and run analysis.").apply {
+            foreground = TextSecondary
+            verticalAlignment = JLabel.TOP
+        }
+        add(JPanel().apply {
+            background = Surface
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            add(JLabel(title).apply { foreground = Accent; font = Font(Font.SANS_SERIF, Font.BOLD or Font.ITALIC, 17) })
+            add(JLabel(description).apply { foreground = TextSecondary; font = Font(Font.SANS_SERIF, Font.PLAIN, 12) })
+        }, BorderLayout.NORTH)
+        populate(form, result)
+        add(form, BorderLayout.CENTER)
+        add(result, BorderLayout.SOUTH)
+    }
+
+    private fun tuningField(form: JPanel, title: String, initial: String): JTextField =
+        JTextField(initial, 8).also { field ->
+            field.background = Background
+            field.foreground = TextPrimary
+            field.caretColor = Accent
+            form.add(JLabel(title).apply { foreground = TextSecondary })
+            form.add(field)
+        }
+
+    private fun tuningAction(form: JPanel, title: String, action: () -> Unit) {
+        form.add(JLabel())
+        form.add(JButton(title).apply {
+            styleButton(this, Accent)
+            addActionListener {
+                try { action() } catch (_: NumberFormatException) { showError("Enter a number in every field.") }
+                catch (error: IllegalArgumentException) { showError(error.message ?: "Invalid tuning input.") }
+            }
+        })
+    }
+
+    private fun number(field: JTextField): Double = field.text.trim().toDouble()
+    private fun decimal(value: Double): String = "%.3f".format(value)
+    private fun signed(value: Double): String = "%+.1f".format(value)
 
     private fun createFlasherPanel(): JPanel =
         panelWithPadding().apply {
@@ -314,11 +468,11 @@ private class P59WindowsApp {
             )
 
             writeCalibrationButton.isEnabled = false
-            writeFullButton.isEnabled = false
+            writeFullButton.isEnabled = pcmHammer.isAvailable
             writeCalibrationButton.toolTipText =
                 "Disabled until the complete erase/program/recovery verifier is hardware-certified."
             writeFullButton.toolTipText =
-                "Disabled until the complete erase/program/recovery verifier is hardware-certified."
+                "Uses the official PCM Hammer engine after a non-destructive test write."
 
             add(Box.createVerticalStrut(16))
             add(readProgress.apply {
@@ -338,8 +492,8 @@ private class P59WindowsApp {
             add(Box.createVerticalStrut(14))
             add(
                 infoCard(
-                    "Write safety lock",
-                    "Windows compatibility does not enable PCM writing. A native Windows package is not evidence that erase, programming, voltage interlocks, retries, and recovery behavior are safe on physical hardware."
+                    "Official PCM Hammer backend",
+                    "Full writes use the official PCM Hammer engine, including its image checks, flash-chip detection, erase/program retries, range CRC verification, and recovery behavior. A non-destructive test write runs first. Calibration-only writing remains disabled because the official CLI does not expose that operation."
                 )
             )
         }
@@ -371,10 +525,10 @@ private class P59WindowsApp {
             layout = BorderLayout()
             add(
                 infoCard(
-                    "Windows runtime",
+                    "$platformName runtime",
                     "This desktop module is a JVM application packaged with its own Java runtime. " +
-                        "It supports Windows 10/11 x64, native COM ports, live OBD-II data, DTC operations, and verified read-only P59 extraction. " +
-                        "The Android APK remains a separate build and is not changed into a Windows executable."
+                        "It supports Windows 10/11 and Linux x64 serial ports, live OBD-II data, DTC operations, and verified read-only P59 extraction. " +
+                        "The Android APK remains a separate build and is unchanged."
                 ),
                 BorderLayout.NORTH
             )
@@ -459,7 +613,7 @@ private class P59WindowsApp {
         }
 
         if (ports.isEmpty()) {
-            log("No serial COM ports were detected.")
+            log("No serial ports were detected.")
         }
     }
 
@@ -623,6 +777,118 @@ private class P59WindowsApp {
         }
     }
 
+    private fun writeFullPcm() {
+        val selectedPort = (portCombo.selectedItem as? SerialPortInfo)?.systemName
+        val client = elmClient
+        if (!serial.isOpen || selectedPort == null || client == null) {
+            showError("Connect to the OBDX Pro first.")
+            return
+        }
+        if (!pcmHammer.isAvailable) {
+            showError("Official PCM Hammer CLI not found. Set PCM_HAMMER_CLI or use the packaged runtime.")
+            return
+        }
+
+        val chooser = JFileChooser().apply {
+            dialogTitle = "Select complete P59 image for full write"
+            fileFilter = FileNameExtensionFilter("P59 binary image (*.bin)", "bin")
+        }
+        if (chooser.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) return
+        val image = chooser.selectedFile
+        if (!image.isFile || image.length() != 1024L * 1024L) {
+            showError("A full P59 write requires an exact 1 MiB (1,048,576 byte) image.")
+            return
+        }
+
+        val voltage = try {
+            client.readVoltage()
+        } catch (_: Throwable) {
+            null
+        }
+        if (voltage == null || voltage < 12.0f) {
+            showError("Full write blocked: adapter voltage must be readable and at least 12.0 V. Use a stable power supply.")
+            return
+        }
+
+        val confirmation = JOptionPane.showInputDialog(
+            frame,
+            "This will erase and rewrite the complete PCM using PCM Hammer.\n" +
+                "Maintain stable power and do not disconnect the interface.\n\n" +
+                "Type WRITE FULL PCM to begin the required test write:",
+            "Destructive operation",
+            JOptionPane.WARNING_MESSAGE
+        )
+        if (confirmation != "WRITE FULL PCM") return
+
+        stopLiveLogging()
+        elmClient = null
+        serial.close()
+        updateConnectedUi(false)
+        writeFullButton.isEnabled = false
+        readStatus.text = "Running PCM Hammer test write..."
+        writeRunning.set(true)
+
+        executor.submit {
+            try {
+                val test = pcmHammer.testWrite(image, selectedPort)
+                if (test.exitCode != 0) {
+                    error("PCM Hammer test write failed. No erase was requested.")
+                }
+
+                val approved = confirmOnUi(
+                    "PCM Hammer test write passed.\n\nProceed with the destructive full write now?",
+                    "Final write confirmation"
+                )
+                if (!approved) {
+                    log("[PCM HAMMER] Full write cancelled after successful test write.")
+                    return@submit
+                }
+
+                onUi { readStatus.text = "PCM Hammer full write in progress — do not power off" }
+                val result = pcmHammer.write(image, selectedPort)
+                if (result.exitCode != 0) {
+                    error("PCM Hammer reported that the full write did not complete successfully. Do not power off the PCM; review the log and retry through PCM Hammer.")
+                }
+                onUi {
+                    readStatus.text = "Full write verified"
+                    JOptionPane.showMessageDialog(
+                        frame,
+                        "PCM Hammer completed and verified the full write.",
+                        "PCM write complete",
+                        JOptionPane.INFORMATION_MESSAGE
+                    )
+                }
+            } catch (error: Throwable) {
+                log("[PCM HAMMER ERROR] ${error.message ?: error.javaClass.simpleName}")
+                onUi {
+                    readStatus.text = "PCM Hammer write stopped"
+                    showError(error.message ?: "PCM Hammer write failed.")
+                }
+            } finally {
+                writeRunning.set(false)
+                onUi {
+                    refreshPorts()
+                    writeFullButton.isEnabled = false
+                }
+            }
+        }
+    }
+
+    private fun confirmOnUi(message: String, title: String): Boolean {
+        if (SwingUtilities.isEventDispatchThread()) {
+            return JOptionPane.showConfirmDialog(
+                frame, message, title, JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE
+            ) == JOptionPane.YES_OPTION
+        }
+        var approved = false
+        SwingUtilities.invokeAndWait {
+            approved = JOptionPane.showConfirmDialog(
+                frame, message, title, JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE
+            ) == JOptionPane.YES_OPTION
+        }
+        return approved
+    }
+
     private fun readDtcs() {
         val client = elmClient ?: run {
             showError("Connect to the OBDX Pro first.")
@@ -703,6 +969,7 @@ private class P59WindowsApp {
     private fun setValue(row: Int, value: String?) {
         if (value != null) {
             telemetryModel.setValueAt(value, row, 1)
+            telemetryValueLabels[row].text = value
         }
     }
 
@@ -717,6 +984,7 @@ private class P59WindowsApp {
         readPcmButton.isEnabled = connected
         readDtcButton.isEnabled = connected
         clearDtcButton.isEnabled = connected
+        writeFullButton.isEnabled = connected && pcmHammer.isAvailable
     }
 
     private fun updateBusy(message: String) {
@@ -809,12 +1077,13 @@ private class P59WindowsApp {
     }
 
     private fun styleButton(button: JButton, accent: Color) {
-        button.background = Surface
-        button.foreground = accent
+        button.background = accent
+        button.foreground = TextPrimary
+        button.font = Font(Font.SANS_SERIF, Font.BOLD or Font.ITALIC, 12)
         button.isFocusPainted = false
         button.border = BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(accent),
-            BorderFactory.createEmptyBorder(7, 12, 7, 12)
+            BorderFactory.createMatteBorder(0, 0, 3, 0, accent.darker()),
+            BorderFactory.createEmptyBorder(8, 14, 7, 14)
         )
     }
 

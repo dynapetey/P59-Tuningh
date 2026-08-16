@@ -29,7 +29,7 @@ class P59DesktopReadService(
                 kernelProvider = {
                     javaClass.getResourceAsStream("/kernel_p01.bin")
                         ?.use { it.readBytes() }
-                        ?: error("kernel_p01.bin is missing from the Windows application resources")
+                        ?: error("kernel_p01.bin is missing from the desktop application resources")
                 },
                 transport = transport,
                 log = log,
@@ -87,7 +87,7 @@ class P59DesktopReadService(
                     reader.exitKernel()
                 } catch (error: Exception) {
                     log(
-                        "[WINDOWS] Kernel exit warning: " +
+                        "[DESKTOP] Kernel exit warning: " +
                             (error.message ?: error.javaClass.simpleName)
                     )
                 }

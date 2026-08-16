@@ -1,0 +1,4 @@
+/build/pcmhammer-source/
+/dist/
+/.gradle-local/
+/windowsApp/build/install/windowsApp/lib/pcmhammer/

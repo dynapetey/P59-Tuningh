@@ -19,10 +19,14 @@ kotlin {
 
 application {
     mainClass.set("com.p59.windows.MainKt")
-    applicationDefaultJvmArgs = listOf(
-        "-Dfile.encoding=UTF-8",
-        "-Dsun.java2d.d3d=true"
-    )
+    applicationDefaultJvmArgs = buildList {
+        add("-Dfile.encoding=UTF-8")
+        // Keep the existing Direct3D acceleration on Windows without passing a
+        // Windows-only Java2D option to Linux launchers.
+        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+            add("-Dsun.java2d.d3d=true")
+        }
+    }
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
