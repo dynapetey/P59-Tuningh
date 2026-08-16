@@ -53,7 +53,7 @@ internal class P59KernelReader(
     fun readEntirePcm(useHighSpeedRequested: Boolean): ByteArray {
         if (useHighSpeedRequested) {
             log(
-                "[P59 READ] VPW 4X was requested. This verified Windows read path " +
+                "[P59 READ] VPW 4X was requested. This verified desktop read path " +
                     "uses VPW 1X until PCM Hammer's complete multi-module 4X " +
                     "permission exchange is ported."
             )
@@ -128,7 +128,7 @@ internal class P59KernelReader(
 
         if (localCrc != pcmCrc) {
             throw IOException(
-                "Full-image CRC mismatch: Windows image %08X, PCM %08X. "
+                "Full-image CRC mismatch: desktop image %08X, PCM %08X. "
                     .format(localCrc, pcmCrc) +
                     "The file was not published."
             )

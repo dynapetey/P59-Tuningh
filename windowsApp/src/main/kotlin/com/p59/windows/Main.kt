@@ -47,6 +47,8 @@ private val Accent = Color(0x00, 0xD1, 0xFF)
 private val Success = Color(0x00, 0xD8, 0x7A)
 private val Warning = Color(0xFF, 0xA3, 0x1A)
 private val ErrorColor = Color(0xFF, 0x55, 0x66)
+private val platformName =
+    if (System.getProperty("os.name").startsWith("Linux", ignoreCase = true)) "Linux" else "Windows"
 
 fun main() {
     SwingUtilities.invokeLater {
@@ -60,7 +62,7 @@ fun main() {
 }
 
 private class P59WindowsApp {
-    private val frame = JFrame("OBDX Pro P59 Tuner — Windows")
+    private val frame = JFrame("OBDX Pro P59 Tuner — $platformName")
     private val executor = Executors.newCachedThreadPool()
     private val serial = SerialConnection()
     private val ioLock = Any()
@@ -122,7 +124,7 @@ private class P59WindowsApp {
         configureFrame()
         refreshPorts()
         updateConnectedUi(false)
-        log("Windows runtime initialized.")
+        log("$platformName runtime initialized.")
         log("PCM write operations are safety-locked; verified read and live data are available.")
         frame.isVisible = true
     }
@@ -255,9 +257,9 @@ private class P59WindowsApp {
             constraints.anchor = GridBagConstraints.NORTHWEST
             add(
                 infoCard(
-                    "Windows connection path",
-                    "Use the OBDX Pro USB connection or a Bluetooth virtual COM port. " +
-                        "The Windows runtime talks to the adapter through its serial COM interface. " +
+                    "$platformName connection path",
+                    "Use the OBDX Pro USB connection or a Bluetooth virtual serial port. " +
+                        "The desktop runtime talks to the adapter through its serial interface. " +
                         "Close PCM Hammer, terminal programs, and other software that may already have the port open."
                 ),
                 constraints
@@ -339,7 +341,7 @@ private class P59WindowsApp {
             add(
                 infoCard(
                     "Write safety lock",
-                    "Windows compatibility does not enable PCM writing. A native Windows package is not evidence that erase, programming, voltage interlocks, retries, and recovery behavior are safe on physical hardware."
+                    "$platformName compatibility does not enable PCM writing. A native desktop package is not evidence that erase, programming, voltage interlocks, retries, and recovery behavior are safe on physical hardware."
                 )
             )
         }
@@ -371,10 +373,10 @@ private class P59WindowsApp {
             layout = BorderLayout()
             add(
                 infoCard(
-                    "Windows runtime",
+                    "$platformName runtime",
                     "This desktop module is a JVM application packaged with its own Java runtime. " +
-                        "It supports Windows 10/11 x64, native COM ports, live OBD-II data, DTC operations, and verified read-only P59 extraction. " +
-                        "The Android APK remains a separate build and is not changed into a Windows executable."
+                        "It supports Windows 10/11 and Linux x64 serial ports, live OBD-II data, DTC operations, and verified read-only P59 extraction. " +
+                        "The Android APK remains a separate build and is unchanged."
                 ),
                 BorderLayout.NORTH
             )
@@ -459,7 +461,7 @@ private class P59WindowsApp {
         }
 
         if (ports.isEmpty()) {
-            log("No serial COM ports were detected.")
+            log("No serial ports were detected.")
         }
     }
 
