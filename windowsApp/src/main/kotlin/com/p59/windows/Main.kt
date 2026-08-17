@@ -180,6 +180,7 @@ private class P59WindowsApp {
             addTab("LIVE", createLiveDataPanel())
             addTab("TUNE", createTunePanel())
             addTab("FLASH", createFlasherPanel())
+            addTab("RECOVERY", createRecoveryPanel())
             addTab("FAULTS", createDiagnosticsPanel())
             addTab("SYSTEM", createAboutPanel())
         }
@@ -394,6 +395,117 @@ private class P59WindowsApp {
                 }
             })
         }
+
+    private fun createRecoveryPanel(): JPanel =
+        panelWithPadding().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            add(infoCard(
+                "PCM RECOVERY ASSISTANT",
+                "Use this workspace after an interrupted flash or when the PCM no longer boots normally. " +
+                    "Keep ignition power stable, do not cycle power, and use only a known-good complete 1 MiB image from the same PCM family."
+            ))
+            add(Box.createVerticalStrut(12))
+            add(recoveryStep(
+                "1 · IDENTIFY CONTROLLER",
+                "Ask PCM Hammer to detect the controller, active kernel, OS ID, and interface state.",
+                "IDENTIFY",
+                Accent
+            ) { runRecoveryDiagnostic("PCM identification") { port -> pcmHammer.identify(port) } })
+            add(Box.createVerticalStrut(10))
+            add(recoveryStep(
+                "2 · TEST COMMUNICATION",
+                "Perform a non-destructive complete test read. Failure here means wiring, power, interface, or recovery-mode communication still needs attention.",
+                "TEST READ",
+                Success
+            ) { runRecoveryDiagnostic("PCM test read") { port -> pcmHammer.testRead(port) } })
+            add(Box.createVerticalStrut(10))
+            add(recoveryStep(
+                "3 · RETRY VERIFIED FULL WRITE",
+                "Runs the normal guarded full-write workflow: image-size check, voltage gate, test-write, two confirmations, and PCM Hammer verification.",
+                "SELECT RECOVERY IMAGE",
+                Warning
+            ) { writeFullPcm() })
+            add(Box.createVerticalStrut(12))
+            add(infoCard(
+                "STOP CONDITIONS",
+                "Do not power off if PCM Hammer reports that a kernel is still running or a write failed after erase. " +
+                    "Retry with the same known-good image. Stop and inspect power, grounds, USB stability, and logs if identification or test-read repeatedly fails. " +
+                    "This tool never exposes standalone erase commands."
+            ))
+        }
+
+    private fun recoveryStep(
+        title: String,
+        body: String,
+        actionTitle: String,
+        actionColor: Color,
+        action: () -> Unit
+    ): JPanel = JPanel(BorderLayout(12, 8)).apply {
+        background = Surface
+        border = BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(1, 4, 1, 1, actionColor),
+            BorderFactory.createEmptyBorder(13, 15, 13, 15)
+        )
+        add(JPanel().apply {
+            background = Surface
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            add(JLabel(title).apply {
+                foreground = TextPrimary
+                font = Font(Font.SANS_SERIF, Font.BOLD or Font.ITALIC, 16)
+            })
+            add(JTextArea(body).apply {
+                isEditable = false
+                isOpaque = false
+                foreground = TextSecondary
+                lineWrap = true
+                wrapStyleWord = true
+            })
+        }, BorderLayout.CENTER)
+        add(JButton(actionTitle).apply {
+            styleButton(this, actionColor)
+            addActionListener { action() }
+        }, BorderLayout.EAST)
+        maximumSize = Dimension(Int.MAX_VALUE, 112)
+        alignmentX = 0f
+    }
+
+    private fun runRecoveryDiagnostic(
+        label: String,
+        operation: (String) -> PcmHammerResult
+    ) {
+        val selectedPort = (portCombo.selectedItem as? SerialPortInfo)?.systemName
+        if (!serial.isOpen || selectedPort == null) {
+            showError("Connect to the OBDX Pro first.")
+            return
+        }
+        if (!pcmHammer.isAvailable) {
+            showError("Official PCM Hammer CLI not found. Use the packaged runtime.")
+            return
+        }
+        stopLiveLogging()
+        elmClient = null
+        serial.close()
+        updateConnectedUi(false)
+        readStatus.text = "$label in progress..."
+        executor.submit {
+            try {
+                val result = operation(selectedPort)
+                if (result.exitCode != 0) error("$label failed. Review the PCM Hammer log before continuing.")
+                onUi {
+                    readStatus.text = "$label passed — reconnect for the next step"
+                    JOptionPane.showMessageDialog(frame, "$label completed successfully.", "Recovery check passed", JOptionPane.INFORMATION_MESSAGE)
+                }
+            } catch (error: Throwable) {
+                log("[RECOVERY ERROR] ${error.message ?: error.javaClass.simpleName}")
+                onUi {
+                    readStatus.text = "$label failed"
+                    showError(error.message ?: "$label failed.")
+                }
+            } finally {
+                onUi { refreshPorts() }
+            }
+        }
+    }
 
     private fun tuningCard(
         title: String,

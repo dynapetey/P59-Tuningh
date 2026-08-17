@@ -40,6 +40,16 @@ PCM Hammer performs image and PCM validation, flash-chip detection, erase/progra
 
 Calibration-only desktop writing remains disabled because the official PCM Hammer CLI does not currently expose that operation.
 
+## PCM recovery workspace
+
+The desktop **RECOVERY** tab provides a fail-safe workflow for an interrupted flash or a PCM that no longer boots normally:
+
+1. Identify the controller and any active recovery kernel through PCM Hammer
+2. Run a non-destructive complete test read to validate power, wiring, interface, and communication
+3. Retry the guarded full-write workflow using a known-good complete 1 MiB image
+
+Recovery uses the same voltage, image-size, test-write, confirmation, retry, and CRC-verification safeguards as normal writing. Standalone erase commands and forced PCM-type overrides are intentionally not exposed.
+
 ## Supported vehicles
 
 The project targets compatible GM vehicles equipped with a P59 PCM, including many Chevrolet Silverado, Tahoe, and Suburban; GMC Sierra and Yukon; Cadillac Escalade; and other Gen III LS/Vortec applications using a supported P59 operating system.
