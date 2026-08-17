@@ -16,19 +16,21 @@ class PcmHammerBackend(private val log: (String) -> Unit) {
     fun write(image: File, device: String): PcmHammerResult =
         run("--write", image, device)
 
-    private fun run(operation: String, image: File, device: String): PcmHammerResult {
+    fun identify(device: String): PcmHammerResult =
+        run("--identify-pcm", null, device)
+
+    fun testRead(device: String): PcmHammerResult =
+        run("--test-read", null, device)
+
+    private fun run(operation: String, image: File?, device: String): PcmHammerResult {
         val cli = executable ?: error(
             "The official PCM Hammer CLI is not installed. Build the packaged Linux runtime " +
                 "or set PCM_HAMMER_CLI to its absolute path."
         )
 
-        val command = mutableListOf(
-            cli.absolutePath,
-            operation,
-            image.absolutePath,
-            "--device",
-            device
-        )
+        val command = mutableListOf(cli.absolutePath, operation)
+        image?.let { command += it.absolutePath }
+        command += listOf("--device", device)
 
         val kernelDir = File(cli.parentFile, "kernels")
         if (kernelDir.isDirectory) {
